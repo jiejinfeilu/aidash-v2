@@ -1,0 +1,8 @@
+{
+  "buildCommand": "mkdir -p public && cp -r web/* public/",
+  "functions": {
+    "api/process.js": { "maxDuration": 60 },
+    "api/save.js": { "maxDuration": 60 },
+    "api/refresh.js": { "maxDuration": 60 }
+  }
+}
