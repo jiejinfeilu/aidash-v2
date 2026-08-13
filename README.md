@@ -114,10 +114,10 @@ aidash/
 ### 第 7 步：验收清单
 
 - [ ] 手机上输入“周六前把房租转给房东”→ AI 给出高优先级待办且截止日期是周六
-- [ ] 点“保存到云端”→ GitHub 仓库出现 `data.json` 和 `data.md`
+- [ ] 点“保存到云端”→ GitHub 仓库出现 `data.json` 和 `data.md`- [ ]点击“保存到云端”→ GitHub 仓库出现`data.json`和`data.md`
 - [ ] 仓库 Actions 里 “Fetch Hotlists” 显示成功，`feeds.json` 有内容
-- [ ] 手动 Run “Daily Kindle Push” 成功，Kindle 收到书
-- [ ] Kindle 锁屏显示全屏仪表盘（含天气、热榜、你的待办）
+- [ ] 手动 Run “Daily Kindle Push” 成功，Kindle 收到书- [ ]手动运行“每日Kindle推送”成功，Kindle收到书籍
+- [ ] Kindle 锁屏显示全屏仪表盘（含天气、热榜、你的待办）- [ ]Kindle锁屏显示全屏仪表盘（含天气、热榜、你的待办）
 
 ---
 
@@ -125,7 +125,7 @@ aidash/
 
 **早上（自动化）**
 
-07:30 前后 GitHub Actions 自动生成今天的仪表盘并发到 Kindle。
+07:30 前后 GitHub Actions 自动生成今天的仪表盘并发到 Kindle。07:30前后GitHub Actions自动生成今天的仪表盘并发到Kindle。
 你只需：打开 Kindle 上今天那本书 → 锁屏 → 屏保就是仪表盘。
 
 **白天（随手记）**
@@ -183,3 +183,5 @@ python send_to_kindle.py              # 生成并推送
 - `APP_PIN` 是唯一能调用你后端的口令，别设成 `1234` 这类常见数字；
 - fine-grained Token 只授权 `aidash` 一个仓库、只勾 Contents 读写；
 - 公开仓库里不写任何密钥；介意隐私可把仓库设为 Private（需自行确认免费版 Pages 可用）。
+
+- v2 已连接 Vercel
