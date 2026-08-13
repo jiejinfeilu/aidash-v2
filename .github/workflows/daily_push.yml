@@ -1,0 +1,72 @@
+name: Daily Kindle Push
+
+on:
+  schedule:
+    # 每小时检查一次（UTC），是否真正推送由 data.json.settings 的
+    # updateHours（间隔，默认 4）和 pushHour（起始，默认 8，北京时间）决定
+    - cron: '0 * * * *'
+  workflow_dispatch:   # 手动 Run 时无条件立即推送
+
+permissions:
+  contents: read       # 只需要读仓库（图片/EPUB 不提交）
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装中文字体（绘图需要）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+
+      - name: 安装依赖
+        run: pip install -r scripts/requirements.txt
+
+      - name: 判断是否到推送时间（按手机设置）
+        id: check
+        run: |
+          python - <<'EOF'
+          import json, os, urllib.request, datetime
+          data = {}
+          try:
+              req = urllib.request.Request(
+                  "https://raw.githubusercontent.com/${{ github.repository }}/main/data.json",
+                  headers={"User-Agent": "aidash"})
+              data = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8")) or {}
+          except Exception:
+              pass
+          s = data.get("settings") or {}
+          try:
+              uh = max(1, int(s.get("updateHours") or 4))
+              ph = int(s.get("pushHour") or 8)
+          except Exception:
+              uh, ph = 4, 8
+          bh = (datetime.datetime.utcnow().hour + 8) % 24
+          run_now = "true" if ((bh - ph) % 24) % uh == 0 else "false"
+          with open(os.environ.get("GITHUB_OUTPUT", "out.txt"), "a") as f:
+              f.write("run=" + run_now + "\n")
+          print("beijing_hour=%d updateHours=%d pushHour=%d run=%s" % (bh, uh, ph, run_now))
+          EOF
+
+      - name: 生成仪表盘图并推送到 Kindle
+        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.run == 'true'
+        env:
+          TZ: Asia/Shanghai   # 让 Python 的本地时间 = 北京时间（仪表盘时钟与轮换位置）
+          # 自动使用当前仓库的 raw 地址
+          RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/main
+          # 以下 6 个来自仓库 Secrets
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_AUTH_CODE: ${{ secrets.SMTP_AUTH_CODE }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
+        run: python scripts/send_to_kindle.py
