@@ -408,13 +408,35 @@
       <label class="field" for="setVisionProvider">识图引擎（眼睛）</label>
       <select id="setVisionProvider">
         <option value="auto">自动（推荐）</option>
-        <option value="deepseek">DeepSeek（V4 Pro）</option>
         <option value="zhipu">智谱 GLM</option>
+        <option value="deepseek">DeepSeek（预留，暂不支持看图）</option>
+        <option value="openai">OpenAI 视觉模型</option>
         <option value="none">关闭识图</option>
       </select>
       <div style="margin-top:12px"><button type="button" class="btn btn-primary" id="btnSaveAi">保存 AI 设置</button></div>
       <div id="aiStatus" class="status"></div>
-      <p class="hint">Key 只存在 Vercel 环境变量，手机端只保存你的选择；模型必须在后端白名单里才可用。</p>
+      <p class="hint">DeepSeek 官方 API 暂不支持看图（实测），识图请用“智谱”或“自动”；免费模型高峰会自动换备用模型并重试。Key 只存在 Vercel，手机端只保存选择。</p>
+
+      <div style="margin-top:14px;border-top:1px dashed #ccc;padding-top:10px">
+        <h3 style="font-size:13px;margin:0 0 6px;letter-spacing:1px">自定义模型（本地保存）</h3>
+        <div id="customModelList"></div>
+        <div class="count-edit">
+          <input type="text" id="cmName" placeholder="名称，如：我的Kimi">
+          <input type="text" id="cmModel" placeholder="模型名，如：moonshot-v1-8k">
+        </div>
+        <div class="count-edit">
+          <input type="url" id="cmBase" placeholder="接口地址，如 https://api.deepseek.com">
+          <input type="text" id="cmPath" placeholder="/chat/completions（默认）">
+        </div>
+        <div class="count-edit">
+          <input type="password" id="cmKey" placeholder="API Key（只存手机本机）">
+          <label class="field" style="flex:none;display:flex;align-items:center;gap:6px;margin:0">支持识图
+            <input type="checkbox" id="cmVision" style="width:auto;height:auto">
+          </label>
+        </div>
+        <div style="margin-top:8px"><button type="button" class="btn" id="btnAddCustomModel">添加自定义模型</button></div>
+        <p class="hint">接口需为 OpenAI 兼容（https）；Key 只保存在手机本机，请求时经 HTTPS 发给你的后端，不写入 GitHub；删除模型即删除 Key。</p>
+      </div>
     </div>
 
     <div class="panel">
@@ -574,6 +596,7 @@
   var LS_AI_MODEL = "aidash_ai_model";
   var LS_AI_VISION = "aidash_ai_vision";
   var LS_MODELS_CACHE = "aidash_models_cache";
+  var LS_CUSTOM_MODELS = "aidash_custom_models";
 
   var MODULE_LABELS = {
     header: "日期时间", weather: "天气", feeds: "资讯热榜",
@@ -806,7 +829,7 @@
   /* ---------- AI 模型选择（手机端） ---------- */
   var MODEL_FALLBACK = [
     { provider: "deepseek", model: "deepseek-v4-flash", label: "DeepSeek · deepseek-v4-flash", vision: false },
-    { provider: "deepseek", model: "deepseek-v4-pro", label: "DeepSeek · deepseek-v4-pro", vision: true },
+    { provider: "deepseek", model: "deepseek-v4-pro", label: "DeepSeek · deepseek-v4-pro", vision: false },
     { provider: "zhipu", model: "glm-4.6v-flash", label: "智谱 GLM · glm-4.6v-flash", vision: true },
     { provider: "openai", model: "gpt-4o-mini", label: "OpenAI · gpt-4o-mini", vision: true }
   ];
@@ -816,6 +839,15 @@
       if (s && Array.isArray(s.models)) { return s; }
     } catch (e) {}
     return { models: MODEL_FALLBACK.slice() };
+  }
+  function getCustomProviders() {
+    try {
+      var a = JSON.parse(localStorage.getItem(LS_CUSTOM_MODELS) || "[]");
+      return Array.isArray(a) ? a : [];
+    } catch (e) { return []; }
+  }
+  function persistCustomProviders(arr) {
+    try { localStorage.setItem(LS_CUSTOM_MODELS, JSON.stringify(arr)); } catch (e) {}
   }
   function getAiChoice() {
     try {
@@ -834,6 +866,11 @@
     if (!sel) { return; }
     var cur = getAiChoice();
     var models = (getModelCache().models || MODEL_FALLBACK).filter(function (m) { return m && m.provider && m.model; });
+    /* 追加手机端自定义模型（provider 固定为 custom，model 存自定义 id） */
+    getCustomProviders().forEach(function (c) {
+      if (!c || !c.id || !c.model) { return; }
+      models.push({ provider: "custom", model: c.id, label: (c.name || "自定义") + " · " + c.model, vision: !!c.vision });
+    });
     sel.innerHTML = models.map(function (m) {
       var val = m.provider + ":" + m.model;
       return '<option value="' + escAttr(val) + '"' +
@@ -841,7 +878,37 @@
         esc(m.label || val) + "</option>";
     }).join("");
     var v = $("setVisionProvider");
-    if (v) { v.value = getVisionChoice(); }
+    if (v) {
+      var opts = [
+        { v: "auto", l: "自动（推荐）" },
+        { v: "zhipu", l: "智谱 GLM（免费）" },
+        { v: "deepseek", l: "DeepSeek（预留，暂不支持看图）" },
+        { v: "openai", l: "OpenAI 视觉模型" },
+        { v: "none", l: "关闭识图" }
+      ];
+      getCustomProviders().forEach(function (c) {
+        if (c.vision) { opts.push({ v: "custom:" + c.id, l: (c.name || "自定义") + " · " + c.model }); }
+      });
+      v.innerHTML = opts.map(function (o) {
+        return '<option value="' + escAttr(o.v) + '">' + esc(o.l) + "</option>";
+      }).join("");
+      v.value = getVisionChoice();
+    }
+  }
+  function renderCustomModels() {
+    var box = $("customModelList");
+    if (!box) { return; }
+    var list = getCustomProviders();
+    box.innerHTML = list.map(function (c, i) {
+      return '<div class="api-row"><span class="url">' + esc(c.name || c.id) + " · " + esc(c.model) + (c.vision ? " · 识图" : "") + "</span>" +
+        '<button type="button" class="q-btn" data-cm-del="' + i + '">删除</button></div>';
+    }).join("") || '<div class="empty">还没有自定义模型</div>';
+    /* 元数据（不含 Key）备份到云端设置，换手机时可查看到配置过什么 */
+    data.settings.customModels = list.map(function (c) {
+      return { id: c.id, name: c.name, model: c.model, vision: !!c.vision, baseUrl: c.baseUrl };
+    });
+    persistData();
+    renderModelOptions();
   }
   function saveAiChoice() {
     var sel = $("setAiModel");
@@ -861,6 +928,7 @@
   }
 
   /* ---------- 后端地址探活与模型列表 ---------- */
+  var probePinState = null; /* "ok" = 口令正确；"bad" = 口令错误；null = 未验证 */
   function renderApiProbe(rows) {
     var box = $("apiProbe");
     if (!box) { return; }
@@ -871,7 +939,15 @@
     var hint = $("activeApiHint");
     if (hint) {
       var act = (localStorage.getItem(LS_ACTIVE_API) || "").replace(/\/+$/, "");
-      hint.textContent = act ? "当前生效地址：" + act : "尚未确定可用地址（请点“测试连接”）";
+      if (!act) {
+        hint.textContent = "尚未确定可用地址（请点“测试连接”）";
+      } else if (probePinState === "ok") {
+        hint.textContent = "当前生效地址：" + act + "，口令正确 ✔";
+      } else if (probePinState === "bad") {
+        hint.textContent = "当前生效地址：" + act + "，但口令错误！请核对 Vercel 环境变量 APP_PIN";
+      } else {
+        hint.textContent = "当前生效地址：" + act + "（未填口令，无法验证）";
+      }
     }
   }
   function probeApis() {
@@ -889,21 +965,36 @@
     });
     return Promise.all(jobs).then(function (rs) {
       var okList = rs.filter(function (r) { return r.ok; }).sort(function (a, b) { return a.ms - b.ms; });
+      var active = okList.length ? okList[0].base : "";
       if (okList.length) {
-        try { localStorage.setItem(LS_ACTIVE_API, okList[0].base); } catch (e) {}
-        setNetBanner("ok", "在线：已连接后端 " + okList[0].base);
+        try { localStorage.setItem(LS_ACTIVE_API, active); } catch (e) {}
+        setNetBanner("ok", "在线：已连接后端 " + active);
       } else {
         try { localStorage.removeItem(LS_ACTIVE_API); } catch (e) {}
       }
-      renderApiProbe(bases.map(function (b) {
-        var r = rs[bases.indexOf(b)];
-        return {
-          base: b,
-          cls: r && r.ok ? "ok" : "err",
-          label: r && r.ok ? ("可用 " + r.ms + "ms" + (r.info ? " · " + r.info : "")) : "不可用"
-        };
-      }));
-      return okList.length ? okList[0].base : "";
+      /* 顺便验证口令：/api/process 先校验口令，再校验参数，
+         所以 400 = 口令正确（缺参数），401 = 口令错误 */
+      var pin = getPin();
+      var pinJob = (active && pin)
+        ? postJSON(active + "/api/process", { pin: pin, text: "" }, 10000)
+            .then(function () { return "ok"; })
+            .catch(function (e) {
+              if (e && e.status === 400) { return "ok"; }
+              if (e && e.status === 401) { return "bad"; }
+              return "unknown";
+            })
+        : Promise.resolve(null);
+      return pinJob.then(function (pinState) {
+        probePinState = pinState;
+        renderApiProbe(bases.map(function (b) {
+          var r = rs[bases.indexOf(b)];
+          var label = r && r.ok ? ("可用 " + r.ms + "ms" + (r.info ? " · " + r.info : "")) : "不可用";
+          if (b === active && pinState === "ok") { label += " · 口令正确"; }
+          else if (b === active && pinState === "bad") { label += " · 口令错误!"; }
+          return { base: b, cls: r && r.ok ? "ok" : "err", label: label };
+        }));
+        return active;
+      });
     });
   }
   function fetchModels() {
@@ -1213,7 +1304,8 @@
       provider: aiChoice.provider,
       model: aiChoice.model,
       visionProvider: vision,
-      history: isRevision ? chatHistory.slice(-8) : []
+      history: isRevision ? chatHistory.slice(-8) : [],
+      customProviders: getCustomProviders()
     }, 45000, function (i, base, total) {
       setStatus("procStatus", "AI 秘书正在分析…（尝试第 " + (i + 1) + "/" + total + " 个后端：" + base + "）");
     }).then(function (res) {
@@ -1308,7 +1400,11 @@
         setStatus(statusId, "已保存到 GitHub 云端 ✔");
         resolve();
       }).catch(function (e) {
-        setStatus(statusId, "保存失败：" + e.message + "（确认后端已部署、口令正确）", true);
+        var msg = "保存失败：" + e.message;
+        if (String(e.message).indexOf("401") >= 0) {
+          msg = "保存失败：口令错误（HTTP 401）。请核对手机“设置 → 连接”里的口令与 Vercel 环境变量 APP_PIN 是否完全一致（4~6 位、无空格、无引号）";
+        }
+        setStatus(statusId, msg, true);
         reject(e);
       });
     });
@@ -2222,6 +2318,7 @@
     renderCustomQuotes();
     renderBuiltinQuotes();
     fillSettings();
+    renderCustomModels();
   }
 
   /* ---------- 云端读取 ---------- */
@@ -2476,7 +2573,10 @@
     $("btnProbeApis").addEventListener("click", function () {
       setStatus("connStatus", "正在测试所有地址…");
       probeApis().then(function (active) {
-        setStatus("connStatus", active ? "测试完成，当前生效：" + active + " ✔" : "所有地址均不可用", !active);
+        if (!active) { setStatus("connStatus", "所有地址均不可用", true); return; }
+        if (probePinState === "ok") { setStatus("connStatus", "测试完成，当前生效：" + active + "，口令正确 ✔"); }
+        else if (probePinState === "bad") { setStatus("connStatus", "后端可用，但口令错误：请核对手机口令与 Vercel 的 APP_PIN 是否一致", true); }
+        else { setStatus("connStatus", "测试完成，当前生效：" + active + "（未填口令，无法验证）"); }
       });
     });
     $("btnSaveConn").addEventListener("click", function () {
@@ -2495,13 +2595,63 @@
       } catch (e) {}
       setStatus("connStatus", "连接信息已保存 ✔，正在自动测试…");
       probeApis().then(function (active) {
-        setStatus("connStatus", active ? "已保存并测试完成，当前生效：" + active : "已保存，但所有地址暂不可用（联网后可重试）", !active);
+        if (!active) { setStatus("connStatus", "已保存，但所有地址暂不可用（联网后可重试）", true); return; }
+        if (probePinState === "ok") { setStatus("connStatus", "已保存并测试完成，当前生效：" + active + "，口令正确 ✔"); }
+        else if (probePinState === "bad") { setStatus("connStatus", "已保存，后端可用但口令错误：请核对手机口令与 Vercel 的 APP_PIN 是否一致", true); }
+        else { setStatus("connStatus", "已保存，当前生效：" + active + "（未填口令，无法验证）"); }
       });
     });
     $("btnSaveAi").addEventListener("click", function () {
       var c = saveAiChoice();
       setStatus("aiStatus", "已保存本机：" + c.provider + " / " + c.model + " ｜ 识图：" + c.visionProvider + "，正在同步云端…");
       saveToCloud("aiStatus").catch(function () {});
+    });
+    $("btnAddCustomModel").addEventListener("click", function () {
+      var name = $("cmName").value.trim();
+      var model = $("cmModel").value.trim();
+      var base = $("cmBase").value.trim().replace(/\/+$/, "");
+      var path = $("cmPath").value.trim() || "/chat/completions";
+      var key = $("cmKey").value.trim();
+      var vision = $("cmVision").checked;
+      if (!name || !model || !base || !key) {
+        setStatus("aiStatus", "请填写名称、模型名、接口地址和 API Key", true);
+        return;
+      }
+      if (!/^https:\/\//i.test(base)) {
+        setStatus("aiStatus", "接口地址必须以 https:// 开头", true);
+        return;
+      }
+      var list = getCustomProviders();
+      list.push({
+        id: "cm_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name: name,
+        model: model,
+        baseUrl: base,
+        chatPath: path,
+        apiKey: key,
+        vision: vision
+      });
+      persistCustomProviders(list);
+      $("cmName").value = "";
+      $("cmModel").value = "";
+      $("cmBase").value = "";
+      $("cmPath").value = "";
+      $("cmKey").value = "";
+      $("cmVision").checked = false;
+      renderCustomModels();
+      setStatus("aiStatus", "已添加自定义模型（Key 仅存本机）✔");
+    });
+    $("customModelList").addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest("[data-cm-del]") : null;
+      if (!btn) { return; }
+      var i = parseInt(btn.dataset.cmDel, 10);
+      var list = getCustomProviders();
+      if (!isNaN(i) && list[i]) {
+        list.splice(i, 1);
+        persistCustomProviders(list);
+        renderCustomModels();
+        setStatus("aiStatus", "已删除（本地 Key 一并删除）");
+      }
     });
     $("btnSaveLoc").addEventListener("click", function () {
       data.settings.city = $("setCity").value.trim() || "温州";
