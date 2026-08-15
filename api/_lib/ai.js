@@ -43,6 +43,10 @@ var DEFAULT_ALLOWED = [
   "openai:gpt-4o-mini"
 ];
 
+/* DeepSeek 官方 API 目前（2026-08-15 实测）不接受图片输入。
+   以后官方支持识图时，把这里改成 true 即可，前端不用改。 */
+var DEEPSEEK_VISION_SUPPORTED = false;
+
 function normalizeKey(s) { return String(s || "").trim().toLowerCase(); }
 
 /* 判断某 provider + model 是否支持图片输入 */
@@ -51,11 +55,75 @@ function hasVision(provider, model) {
   var m = String(model || "").toLowerCase();
   if (p === "zhipu") { return /glm-4(\.\d+)?v/.test(m); }
   if (p === "deepseek") {
-    /* 用户实测 deepseek-v4-pro(0813) 原生支持识图；flash/chat 仍为纯文本 */
-    return m.indexOf("deepseek-v4-pro") === 0;
+    return DEEPSEEK_VISION_SUPPORTED;
   }
   if (p === "openai") { return /gpt-4o|gpt-4\.1|gpt-5/.test(m); }
   return false;
+}
+
+/* 手机端“自定义模型”校验：
+   - 必须 https、不能是内网地址（防 SSRF）
+   - id/baseUrl/model/apiKey 必填，长度限制
+   - chatPath 只允许普通路径，最终统一以 /chat/completions 结尾 */
+function sanitizeCustomProviders(arr) {
+  if (!Array.isArray(arr)) { return []; }
+  var out = [];
+  arr.slice(0, 5).forEach(function (c) {
+    if (!c || typeof c !== "object") { return; }
+    var id = String(c.id || "").trim().slice(0, 40);
+    var name = String(c.name || "").trim().slice(0, 50);
+    var baseUrl = String(c.baseUrl || "").trim().replace(/\/+$/, "").slice(0, 300);
+    var model = String(c.model || "").trim().slice(0, 100);
+    var apiKey = String(c.apiKey || "").trim().slice(0, 600);
+    var chatPath = String(c.chatPath || "/chat/completions").trim().slice(0, 80);
+    if (!id || !baseUrl || !model || !apiKey) { return; }
+    if (!/^https:\/\//i.test(baseUrl)) { return; }
+    try {
+      var u = new URL(baseUrl);
+      var host = u.hostname.toLowerCase();
+      if (host === "localhost" || host === "127.0.0.1" || host === "::1" ||
+          /^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
+          host.endsWith(".local")) { return; }
+      if (u.username || u.password) { return; }
+    } catch (e) { return; }
+    if (chatPath.indexOf("..") >= 0 || !/^\/[a-zA-Z0-9._/-]*$/.test(chatPath)) { return; }
+    if (!chatPath.endsWith("/chat/completions")) {
+      chatPath = chatPath.replace(/\/+$/, "") + "/chat/completions";
+    }
+    out.push({
+      id: id, name: name || id, baseUrl: baseUrl, model: model,
+      apiKey: apiKey, chatPath: chatPath, vision: !!c.vision
+    });
+  });
+  return out;
+}
+
+/* 拼出 OpenAI 兼容的完整接口地址 */
+function chatEndpoint(baseUrl, chatPath) {
+  var b = String(baseUrl || "").replace(/\/+$/, "");
+  var p = String(chatPath || "/chat/completions");
+  if (!/^\//.test(p)) { p = "/" + p; }
+  if (!p.endsWith("/chat/completions")) { p = p.replace(/\/+$/, "") + "/chat/completions"; }
+  return b + p;
+}
+
+/* 智谱识图模型列表：默认两个免费模型都试（并行），可用
+   ZHIPU_VISION_MODELS 或 ZHIPU_MODEL 覆盖，逗号分隔多个。 */
+var DEFAULT_ZHIPU_VISION = ["glm-4.6v-flash", "glm-4v-flash"];
+function getVisionModels(env) {
+  env = env || process.env;
+  var arr = [];
+  var raw = String(env.ZHIPU_VISION_MODELS || env.ZHIPU_MODEL || "").trim();
+  if (raw) {
+    raw.split(",").forEach(function (s) {
+      s = s.trim();
+      if (s && arr.indexOf(s) < 0) { arr.push(s); }
+    });
+  }
+  DEFAULT_ZHIPU_VISION.forEach(function (m) {
+    if (arr.indexOf(m) < 0) { arr.push(m); }
+  });
+  return arr.slice(0, 3);
 }
 
 /* 读取白名单：ALLOWED_AI_MODELS（换行/逗号/分号分隔 "provider:model"） */
@@ -87,7 +155,26 @@ function listAllowedModels(env) {
 function resolveSecretary(env, body) {
   env = env || process.env;
   body = body || {};
+  var customs = sanitizeCustomProviders(body.customProviders);
   var providerName = normalizeKey(body.provider || env.AI_PROVIDER || "deepseek");
+  if (providerName === "custom") {
+    var cid = String(body.model || "").trim();
+    var c = null;
+    for (var i = 0; i < customs.length; i++) {
+      if (customs[i].id === cid) { c = customs[i]; break; }
+    }
+    if (!c) { throw new Error("找不到该自定义模型（请先在手机“设置 → AI 模型”里添加并保存）"); }
+    return {
+      provider: "custom",
+      model: c.model,
+      customId: c.id,
+      meta: { envKey: null, label: c.name || c.id },
+      baseUrl: c.baseUrl,
+      chatPath: c.chatPath,
+      apiKey: c.apiKey,
+      vision: !!c.vision
+    };
+  }
   var meta = PROVIDERS[providerName];
   if (!meta) { throw new Error("AI_PROVIDER 仅支持 deepseek / openai / zhipu"); }
   var model = String(body.model || env[meta.envModel] || meta.model).trim();
@@ -108,15 +195,25 @@ function resolveSecretary(env, body) {
    none                      -> 关闭识图
    auto                      -> 秘书模型能看图就单次调用；否则用智谱兜底
    deepseek / zhipu / openai -> 强制指定；可逗号写多个按顺序兜底 */
-function visionChain(env, secretary, visionProviderRaw) {
+function visionChain(env, secretary, visionProviderRaw, customProviders) {
   env = env || process.env;
+  var customs = sanitizeCustomProviders(customProviders);
   var raw = normalizeKey(visionProviderRaw || env.VISION_PROVIDER || "auto");
   if (!raw || raw === "none") { return { mode: "none", chain: [] }; }
   if (raw === "auto") {
     if (secretary.vision) { return { mode: "single", chain: [] }; }
     var autoChain = [];
+    /* 自定义视觉模型优先（prio=0），智谱兜底（prio=1） */
+    customs.forEach(function (c) {
+      if (c.vision) {
+        autoChain.push({ provider: "custom", id: c.id, model: c.model, apiKey: c.apiKey, baseUrl: c.baseUrl, chatPath: c.chatPath, prio: 0 });
+      }
+    });
     if (env.ZHIPU_API_KEY) {
-      autoChain.push({ provider: "zhipu", model: String(env[PROVIDERS.zhipu.envModel] || PROVIDERS.zhipu.model).trim() });
+      getVisionModels(env).forEach(function (m) { autoChain.push({ provider: "zhipu", model: m, prio: 1 }); });
+    }
+    if (!autoChain.length) {
+      throw new Error("未配置任何识图引擎（需要 ZHIPU_API_KEY 或在手机添加支持识图的自定义模型）");
     }
     return { mode: "two", chain: autoChain };
   }
@@ -124,11 +221,48 @@ function visionChain(env, secretary, visionProviderRaw) {
   raw.split(",").forEach(function (s) {
     s = s.trim();
     if (!s) { return; }
+    if (s === "deepseek") {
+      /* DeepSeek 预留：官方支持识图后优先用它；现在失败会自动落到智谱 */
+      chain.push({ provider: "deepseek", model: String(env[PROVIDERS.deepseek.envModel] || PROVIDERS.deepseek.model).trim(), prio: 0 });
+      if (env.ZHIPU_API_KEY) {
+        getVisionModels(env).forEach(function (m) { chain.push({ provider: "zhipu", model: m, prio: 1 }); });
+      }
+      return;
+    }
+    if (s.indexOf("custom:") === 0) {
+      var cid = s.slice(7);
+      for (var i = 0; i < customs.length; i++) {
+        if (customs[i].id === cid && customs[i].vision) {
+          chain.push({ provider: "custom", id: cid, model: customs[i].model, apiKey: customs[i].apiKey, baseUrl: customs[i].baseUrl, chatPath: customs[i].chatPath });
+          break;
+        }
+      }
+      return;
+    }
     var meta = PROVIDERS[s];
     if (!meta) { return; }
-    chain.push({ provider: s, model: String(env[meta.envModel] || meta.model).trim() });
+    if (s === "zhipu") {
+      getVisionModels(env).forEach(function (m) { chain.push({ provider: "zhipu", model: m }); });
+    } else {
+      chain.push({ provider: s, model: String(env[meta.envModel] || meta.model).trim() });
+    }
   });
+  /* 去重（deepseek 分支已自动带上智谱兜底，避免重复调用） */
+  var seen = {};
+  chain = chain.filter(function (c) {
+    var k = c.provider + ":" + c.model + ":" + (c.id || "");
+    if (seen[k]) { return false; }
+    seen[k] = true;
+    return true;
+  });
+  if (!chain.length) {
+    throw new Error("识图引擎选择无效，或该自定义模型未勾选“支持识图”");
+  }
   return { mode: "two", chain: chain };
+}
+
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
 /* 发起 HTTPS POST，返回解析后的 JSON；非 2xx 时抛错 */
@@ -166,7 +300,7 @@ function httpsJsonPost(urlStr, headers, body, timeoutMs) {
 /* 真正发送一次对话请求 */
 async function sendChat(meta, options, payload) {
   var res = await httpsJsonPost(
-    meta.base + meta.chatPath,
+    chatEndpoint(options.baseUrl || meta.base, options.chatPath || meta.chatPath),
     { "Authorization": "Bearer " + options.apiKey },
     payload,
     options.timeoutMs
@@ -182,7 +316,8 @@ async function sendChat(meta, options, payload) {
 /* 调用 Chat Completions；部分视觉模型不支持 response_format 时自动去掉重试 */
 async function chatCompletion(options) {
   var p = PROVIDERS[options.provider];
-  if (!p) { throw new Error("未知 AI_PROVIDER：" + options.provider); }
+  if (!p && !options.baseUrl) { throw new Error("未知 AI_PROVIDER：" + options.provider); }
+  if (options.provider === "custom" && !options.baseUrl) { throw new Error("自定义模型缺少接口地址"); }
   var payload = {
     model: options.model || p.model,
     messages: options.messages,
@@ -263,7 +398,8 @@ function buildSecretaryMessages(input) {
 }
 
 /* 识图专用：让视觉模型完整提取图片文字 */
-async function readImageText(provider, model, imageBase64, apiKey, timeoutMs) {
+async function readImageText(provider, model, imageBase64, apiKey, timeoutMs, opts) {
+  opts = opts || {};
   var messages = [{
     role: "user",
     content: [
@@ -280,9 +416,64 @@ async function readImageText(provider, model, imageBase64, apiKey, timeoutMs) {
     model: model,
     messages: messages,
     timeoutMs: timeoutMs || 55000,
-    jsonMode: false
+    jsonMode: false,
+    baseUrl: opts.baseUrl,
+    chatPath: opts.chatPath
   });
   return String(content || "").trim();
+}
+
+/* 识图多引擎 + 优先级分组 + 限流自动重试：
+   - 按 prio 分组：prio 小的一组先并行试，全部失败才轮到下一组
+     （自定义视觉模型 prio=0 优先，智谱 prio=1 兜底）
+   - 最后一组若报“访问量过大/限流”，等 2 秒再重试一次 */
+async function readImageTextMulti(env, chain, imageBase64, readFn) {
+  env = env || process.env;
+  readFn = readFn || readImageText;
+  var groups = [];
+  chain.forEach(function (vp) {
+    var p = typeof vp.prio === "number" ? vp.prio : 0;
+    if (!groups[p]) { groups[p] = []; }
+    groups[p].push(vp);
+  });
+  var lastErr = null;
+  for (var g = 0; g < groups.length; g++) {
+    var attempts = 0;
+    while (attempts < 2) {
+      attempts++;
+      var jobs = groups[g].map(function (vp) {
+      var meta = PROVIDERS[vp.provider];
+      var key = vp.apiKey || (meta ? env[meta.envKey] : "");
+      if (!key) {
+        return Promise.resolve({ ok: false, err: new Error("未配置 " + (meta ? meta.envKey : "自定义模型 API Key")) });
+      }
+      return readFn(vp.provider, vp.model, imageBase64, key, 15000, {
+        baseUrl: vp.baseUrl,
+        chatPath: vp.chatPath
+      })
+          .then(function (t) {
+            return { ok: true, text: t, provider: vp.provider, model: vp.model };
+          })
+          .catch(function (e) { return { ok: false, err: e }; });
+      });
+      var results = await Promise.all(jobs);
+      var hit = null;
+      for (var i = 0; i < results.length; i++) {
+        if (results[i].ok) { hit = results[i]; break; }
+      }
+      if (hit) { return hit; }
+      var errs = results.map(function (r) { return r.err; }).filter(Boolean);
+      lastErr = errs[errs.length - 1] || new Error("识图失败");
+      var rateLimited = errs.some(function (e) {
+        return /访问量过大|限流|429|rate.?limit|繁忙|overload|稍后再试/i.test(String(e && e.message));
+      });
+      var isLastGroup = g === groups.length - 1;
+      /* 非最后一组：失败直接切换下一组（保持优先级）；最后一组限流才重试 */
+      if (!rateLimited || !isLastGroup) { break; }
+      await sleep(2000);
+    }
+  }
+  throw lastErr;
 }
 
 /* 尽量从模型输出中解析 JSON（支持纯 JSON / 代码块 / 前后杂文） */
@@ -304,12 +495,17 @@ function parseJsonContent(content) {
 
 module.exports = {
   PROVIDERS: PROVIDERS,
+  DEEPSEEK_VISION_SUPPORTED: DEEPSEEK_VISION_SUPPORTED,
   hasVision: hasVision,
+  sanitizeCustomProviders: sanitizeCustomProviders,
+  chatEndpoint: chatEndpoint,
   listAllowedModels: listAllowedModels,
   resolveSecretary: resolveSecretary,
   visionChain: visionChain,
   buildSecretaryMessages: buildSecretaryMessages,
   readImageText: readImageText,
+  readImageTextMulti: readImageTextMulti,
+  getVisionModels: getVisionModels,
   chatCompletion: chatCompletion,
   parseJsonContent: parseJsonContent,
   httpsJsonPost: httpsJsonPost
