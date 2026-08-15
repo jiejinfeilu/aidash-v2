@@ -51,7 +51,19 @@ async function runProcess(input) {
   /* 2. 参数校验 */
   var text = String(input.text || "").trim();
   var imageBase64 = String(input.imageBase64 || "");
-  if (!text && !imageBase64) {
+  var userName = String(input.userName || "").trim().slice(0, 20);
+  var userNameVariants = [];
+  String(input.userNameVariants || "").split(/[,，、;；]/).forEach(function (s) {
+    s = String(s || "").trim().slice(0, 20);
+    if (s && userNameVariants.length < 10) { userNameVariants.push(s); }
+  });
+  var aiTone = ["活泼", "严肃"].indexOf(String(input.aiTone || "").trim()) >= 0 ? String(input.aiTone).trim() : "默认";
+  var aiGreeting = String(input.aiGreeting || "").trim().slice(0, 60);
+  var personaMd = String(input.personaMd || "").trim().slice(0, 12000);
+  var personaName = String(input.personaName || "").trim().slice(0, 30);
+  var personaTask = String(input.personaTask || "").trim().toLowerCase();
+  /* 人设压缩任务不需要文字/图片 */
+  if (!text && !imageBase64 && personaTask !== "compress") {
     return { status: 400, json: { error: "缺少文字或图片" } };
   }
   if (imageBase64 && !/^data:image\/(png|jpe?g|webp|gif|bmp);base64,/.test(imageBase64)) {
@@ -74,20 +86,68 @@ async function runProcess(input) {
     return { status: 500, json: { error: "未配置 " + secretary.meta.envKey + " 环境变量" } };
   }
 
-  /* 4. 解析识图引擎（DeepSeek 不支持时给出清晰提示） */
-  var vc;
-  try {
-    vc = ai.visionChain(env, secretary, input.visionProvider, input.customProviders);
-  } catch (e) {
-    return { status: 400, json: { error: e.message } };
+  /* 4.5 人设档案整理压缩（不走识图/待办流程） */
+  if (personaTask === "compress") {
+    if (!personaMd) {
+      return { status: 400, json: { error: "当前人设档案为空，无法压缩" } };
+    }
+    try {
+      var maxTokens2 = 4096;
+      if (secretary.provider === "zhipu") {
+        maxTokens2 = parseInt(env.ZHIPU_MAX_TOKENS || "1024", 10) || 1024;
+      }
+      var cContent = await ai.chatCompletion({
+        provider: secretary.provider,
+        apiKey: apiKey,
+        model: secretary.model,
+        messages: ai.buildCompressMessages(personaMd),
+        baseUrl: secretary.baseUrl,
+        chatPath: secretary.chatPath,
+        timeoutMs: 45000,
+        maxTokens: maxTokens2
+      });
+      var cParsed = ai.parseJsonContent(cContent);
+      var cMd = cParsed && cParsed.personaMd ? String(cParsed.personaMd).trim() : "";
+      if (!cMd) {
+        return { status: 502, json: { error: "压缩失败：AI 未返回有效档案" } };
+      }
+      return {
+        status: 200,
+        json: {
+          ok: true,
+          personaMd: cMd.slice(0, 12000),
+          summary: cParsed.summary ? String(cParsed.summary).trim().slice(0, 300) : "",
+          provider: secretary.provider,
+          model: secretary.model
+        }
+      };
+    } catch (e) {
+      return { status: 502, json: { error: "压缩失败：" + e.message } };
+    }
   }
-  var visionUsed = vc.mode === "none" ? "none" : "";
+
+  /* 5. 解析识图引擎（仅当有图片时才需要） */
+  var vc = null;
+  var visionUsed = "";
+  if (imageBase64) {
+    try {
+      vc = ai.visionChain(env, secretary, input.visionProvider, input.customProviders);
+    } catch (e) {
+      return { status: 400, json: { error: e.message } };
+    }
+    visionUsed = vc.mode === "none" ? "none" : "";
+  }
 
   /* 总预算：识图 + 分析共享 52 秒（Vercel 免费版函数上限 60 秒） */
   var TOTAL_BUDGET = 52000;
   var startAt = Date.now();
+  var secBase = {
+    text: text, today: beijingToday(), history: history,
+    userName: userName, userNameVariants: userNameVariants,
+    aiTone: aiTone, aiGreeting: aiGreeting, personaMd: personaMd, personaName: personaName
+  };
 
-  /* 5. 组装消息（有图时按引擎选择单次调用或先读图再分析） */
+  /* 6. 组装消息（有图时按引擎选择单次调用或先读图再分析） */
   var messages;
   if (imageBase64) {
     if (vc.mode === "none") {
@@ -95,9 +155,7 @@ async function runProcess(input) {
     }
     if (vc.mode === "single") {
       /* 秘书模型本身能看图：一次调用直接输出 JSON */
-      messages = ai.buildSecretaryMessages({
-        text: text, today: beijingToday(), history: history, singleImage: imageBase64
-      });
+      messages = ai.buildSecretaryMessages(Object.assign({ singleImage: imageBase64 }, secBase));
       visionUsed = secretary.provider + ":" + secretary.model;
     } else {
       /* 两段式：先并行读图（多模型兜底 + 限流重试），再交给秘书分析 */
@@ -111,15 +169,13 @@ async function runProcess(input) {
         };
       }
       visionUsed = img.provider + ":" + img.model;
-      messages = ai.buildSecretaryMessages({
-        text: text, today: beijingToday(), history: history, imageText: img.text
-      });
+      messages = ai.buildSecretaryMessages(Object.assign({ imageText: img.text }, secBase));
     }
   } else {
-    messages = ai.buildSecretaryMessages({ text: text, today: beijingToday(), history: history });
+    messages = ai.buildSecretaryMessages(secBase);
   }
 
-  /* 6. 调用 AI */
+  /* 7. 调用 AI */
   try {
     /* 智谱免费模型输出上限 1024；付费模型可用 ZHIPU_MAX_TOKENS 调大 */
     var maxTokens = 4096;
@@ -158,7 +214,8 @@ async function runProcess(input) {
         countdowns: parsed.countdowns || [],
         notes: parsed.notes || [],
         shopping: parsed.shopping || [],
-        markdown: parsed.markdown || ""
+        markdown: parsed.markdown || "",
+        personaUpdate: parsed.personaUpdate ? String(parsed.personaUpdate).trim().slice(0, 4000) : ""
       }
     };
   } catch (e) {
