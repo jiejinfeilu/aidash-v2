@@ -69,13 +69,18 @@ async function runProcess(input) {
   } catch (e) {
     return { status: 400, json: { error: e.message } };
   }
-  var apiKey = env[secretary.meta.envKey];
+  var apiKey = secretary.apiKey || (secretary.meta.envKey ? env[secretary.meta.envKey] : "");
   if (!apiKey) {
     return { status: 500, json: { error: "未配置 " + secretary.meta.envKey + " 环境变量" } };
   }
 
-  /* 4. 解析识图引擎 */
-  var vc = ai.visionChain(env, secretary, input.visionProvider);
+  /* 4. 解析识图引擎（DeepSeek 不支持时给出清晰提示） */
+  var vc;
+  try {
+    vc = ai.visionChain(env, secretary, input.visionProvider, input.customProviders);
+  } catch (e) {
+    return { status: 400, json: { error: e.message } };
+  }
   var visionUsed = vc.mode === "none" ? "none" : "";
 
   /* 5. 组装消息（有图时按引擎选择单次调用或先读图再分析） */
@@ -91,32 +96,19 @@ async function runProcess(input) {
       });
       visionUsed = secretary.provider + ":" + secretary.model;
     } else {
-      /* 两段式：先用视觉模型读图，再交给秘书分析 */
-      var imageText = "";
-      var lastErr = null;
-      for (var i = 0; i < vc.chain.length; i++) {
-        var vp = vc.chain[i];
-        var vKey = env[ai.PROVIDERS[vp.provider].envKey];
-        if (!vKey) {
-          lastErr = new Error("未配置 " + ai.PROVIDERS[vp.provider].envKey);
-          continue;
-        }
-        try {
-          imageText = await ai.readImageText(vp.provider, vp.model, imageBase64, vKey, 55000);
-          visionUsed = vp.provider + ":" + vp.model;
-          break;
-        } catch (e) {
-          lastErr = e;
-        }
-      }
-      if (!imageText) {
+      /* 两段式：先并行读图（多模型兜底 + 限流重试），再交给秘书分析 */
+      var img;
+      try {
+        img = await ai.readImageTextMulti(env, vc.chain, imageBase64);
+      } catch (e) {
         return {
           status: 502,
-          json: { error: "识图失败（已尝试全部识图引擎）：" + (lastErr ? lastErr.message : "未知错误") }
+          json: { error: "识图失败（已尝试全部识图引擎）：" + e.message }
         };
       }
+      visionUsed = img.provider + ":" + img.model;
       messages = ai.buildSecretaryMessages({
-        text: text, today: beijingToday(), history: history, imageText: imageText
+        text: text, today: beijingToday(), history: history, imageText: img.text
       });
     }
   } else {
@@ -125,12 +117,20 @@ async function runProcess(input) {
 
   /* 6. 调用 AI */
   try {
+    /* 智谱免费模型输出上限 1024；付费模型可用 ZHIPU_MAX_TOKENS 调大 */
+    var maxTokens = 4096;
+    if (secretary.provider === "zhipu") {
+      maxTokens = parseInt(env.ZHIPU_MAX_TOKENS || "1024", 10) || 1024;
+    }
     var content = await ai.chatCompletion({
       provider: secretary.provider,
       apiKey: apiKey,
       model: secretary.model,
       messages: messages,
-      timeoutMs: 55000
+      baseUrl: secretary.baseUrl,
+      chatPath: secretary.chatPath,
+      timeoutMs: imageBase64 ? 25000 : 45000,
+      maxTokens: maxTokens
     });
     var parsed = ai.parseJsonContent(content);
     if (!parsed || typeof parsed !== "object") {
