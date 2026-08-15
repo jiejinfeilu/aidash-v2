@@ -214,14 +214,50 @@
   .dash-overlay.open { display: flex; }
   .dash-overlay img { max-width: 97%; max-height: 84%; object-fit: contain; }
   .dash-overlay .btn { margin-top: 12px; }
+
+  /* ---- v2 修复：网络横幅 / 全屏按钮 / 地址探活 / AI 选择 / 秘书对话 / 壁纸引导 ---- */
+  .net-banner { margin: 8px 14px 0; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; }
+  .net-banner.ok { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; }
+  .net-banner.err { background: #fdecea; color: #b71c1c; border: 1px solid #ef9a9a; }
+  .fs-btn {
+    border: 1px solid var(--ink); border-radius: 8px; background: #fff; color: var(--ink);
+    width: 30px; height: 30px; font-size: 15px; line-height: 1; flex: none; font-family: inherit;
+  }
+  .fs-btn:active { background: #f2f2f2; }
+  select {
+    width: 100%; border: 1.5px solid var(--ink); border-radius: 10px;
+    padding: 10px 12px; font-size: 16px; font-family: inherit; background: #fff; color: var(--ink); outline: none;
+  }
+  .api-probe { margin-top: 8px; }
+  .api-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--hair); font-size: 12px; }
+  .api-row:last-child { border-bottom: none; }
+  .api-row .url { flex: 1; min-width: 0; word-break: break-all; color: var(--ink); }
+  .api-badge { flex: none; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; border: 1px solid #999; white-space: nowrap; }
+  .api-badge.ok { color: #1b5e20; border-color: #66bb6a; background: #e8f5e9; }
+  .api-badge.err { color: #b71c1c; border-color: #ef9a9a; background: #fdecea; }
+  .api-badge.busy { color: #555; border-color: #bbb; background: #fafafa; }
+  .chat-list { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+  .chat-msg { max-width: 88%; padding: 9px 12px; border-radius: 14px; font-size: 14px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; }
+  .chat-msg.user { align-self: flex-end; background: #111; color: #fff; border-bottom-right-radius: 4px; }
+  .chat-msg.assistant { align-self: flex-start; background: #f2f2f2; color: var(--ink); border: 1px solid var(--hair); border-bottom-left-radius: 4px; }
+  .chat-input-row { display: flex; gap: 8px; margin-top: 10px; }
+  .chat-input-row input { flex: 1; min-width: 0; }
+  .chat-input-row .btn { flex: none; }
+  .wall-steps { background: #fff; color: #111; border-radius: 12px; padding: 12px 16px; margin-top: 12px; max-width: 92%; }
+  .wall-steps h3 { margin: 0 0 6px; font-size: 14px; }
+  .wall-steps ol { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.7; }
 </style>
 </head>
 <body>
 
 <header class="app-header">
   <div class="brand">AiDash<span class="dot">.</span></div>
-  <div class="header-date" id="headerDate"></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <button type="button" id="btnFullscreen" class="fs-btn" title="进入 / 退出全屏">⛶</button>
+    <div class="header-date" id="headerDate"></div>
+  </div>
 </header>
+<div id="netBanner" class="net-banner" hidden></div>
 
 <main>
   <!-- ===== 记录页 ===== -->
@@ -243,6 +279,16 @@
         <button type="button" class="btn btn-primary" id="btnProcess">AI 秘书处理</button>
       </div>
       <div id="procStatus" class="status"></div>
+    </div>
+
+    <div id="chatBox" class="panel" hidden>
+      <h2>秘书对话</h2>
+      <div id="chatList" class="chat-list"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="对秘书说：房租改成下周一 / 再加一条买水果…">
+        <button type="button" class="btn" id="btnChatSend">发送</button>
+      </div>
+      <p class="hint">AI 先给你安排建议，你可以继续说话修改；确认后在下方面板勾选并“保存到云端”。</p>
     </div>
 
     <div id="resultPanel" class="panel" hidden>
@@ -322,6 +368,10 @@
       <div class="dash-toolbar">
         <button type="button" class="btn" id="btnDashFull">全屏预览</button>
         <button type="button" class="btn" id="btnDashSave">保存图片</button>
+        <button type="button" class="btn" id="btnDashShare">分享</button>
+      </div>
+      <div class="dash-toolbar">
+        <button type="button" class="btn" id="btnDashWall">设为壁纸（引导）</button>
       </div>
       <div id="dashStatus" class="status"></div>
     </div>
@@ -334,16 +384,37 @@
   <section id="tab-settings" class="tab-page">
     <div class="panel">
       <h2>连接</h2>
-      <label class="field" for="setApi">Vercel 后端地址（C 部分部署后填写）</label>
-      <input type="url" id="setApi" placeholder="https://aidash-xxxx.vercel.app">
+      <label class="field" for="setApiList">后端地址列表（每行一个，自动切换）</label>
+      <textarea id="setApiList" rows="3" placeholder="https://aidash-v2-xxxx.vercel.app&#10;https://另一个可用地址"></textarea>
+      <div id="apiProbe" class="api-probe"></div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button type="button" class="btn" id="btnProbeApis">测试连接</button>
+        <button type="button" class="btn btn-primary" id="btnSaveConn">保存连接</button>
+      </div>
+      <p class="hint" id="activeApiHint"></p>
       <label class="field" for="setRaw">GitHub 数据地址（raw）</label>
       <input type="url" id="setRaw" placeholder="https://raw.githubusercontent.com/用户名/aidash/main">
       <label class="field" for="setPin">口令（与后端 APP_PIN 一致，4~6 位）</label>
       <input type="password" id="setPin" placeholder="••••" inputmode="numeric">
-      <div style="margin-top:12px"><button type="button" class="btn btn-primary" id="btnSaveConn">保存连接</button></div>
       <div id="connStatus" class="status"></div>
       <p class="hint">口令只保存在本机浏览器，不写入 GitHub。</p>
-      <p class="hint">后端地址支持多个自动切换（config.js 的 API_BASES）；在此填一个地址会作为首选覆盖。</p>
+      <p class="hint">保存后会自动测试所有地址，最快的记为“当前生效”，请求优先走它。</p>
+    </div>
+
+    <div class="panel">
+      <h2>AI 模型</h2>
+      <label class="field" for="setAiModel">分析模型（秘书）</label>
+      <select id="setAiModel"></select>
+      <label class="field" for="setVisionProvider">识图引擎（眼睛）</label>
+      <select id="setVisionProvider">
+        <option value="auto">自动（推荐）</option>
+        <option value="deepseek">DeepSeek（V4 Pro）</option>
+        <option value="zhipu">智谱 GLM</option>
+        <option value="none">关闭识图</option>
+      </select>
+      <div style="margin-top:12px"><button type="button" class="btn btn-primary" id="btnSaveAi">保存 AI 设置</button></div>
+      <div id="aiStatus" class="status"></div>
+      <p class="hint">Key 只存在 Vercel 环境变量，手机端只保存你的选择；模型必须在后端白名单里才可用。</p>
     </div>
 
     <div class="panel">
@@ -411,6 +482,9 @@
 
     <div class="panel">
       <h2>其他</h2>
+      <label class="switch">打开后自动全屏（首次点击时进入）
+        <input type="checkbox" id="autoFullscreen"><span class="track"></span>
+      </label>
       <label class="switch">AI 返回后自动采纳并保存
         <input type="checkbox" id="autoAdopt"><span class="track"></span>
       </label>
@@ -452,6 +526,20 @@
   <button type="button" class="btn" id="btnDashOverlayClose">关闭</button>
 </div>
 
+<div class="dash-overlay" id="wallOverlay">
+  <img id="wallOverlayImg" alt="仪表盘（设壁纸用）">
+  <div class="wall-steps">
+    <h3>如何设为壁纸</h3>
+    <ol>
+      <li>先点“保存图片”，把这张仪表盘存入手机。</li>
+      <li>打开系统相册，找到刚保存的图片。</li>
+      <li>点“更多 → 设为壁纸”，选择锁屏 / 主屏即可。</li>
+    </ol>
+    <p style="font-size:12px;color:#555;margin:6px 0 0">网页无法自动设置系统壁纸（安卓 / iOS 安全限制），只能手动引导。</p>
+  </div>
+  <button type="button" class="btn" id="btnWallClose">关闭</button>
+</div>
+
 <script src="config.js"></script>
 <script>
 /* ================================================================
@@ -481,6 +569,11 @@
   var LS_PIN = "aidash_pin";
   var LS_API = "aidash_api";
   var LS_RAW = "aidash_raw";
+  var LS_API_LIST = "aidash_api_list";
+  var LS_ACTIVE_API = "aidash_active_api";
+  var LS_AI_MODEL = "aidash_ai_model";
+  var LS_AI_VISION = "aidash_ai_vision";
+  var LS_MODELS_CACHE = "aidash_models_cache";
 
   var MODULE_LABELS = {
     header: "日期时间", weather: "天气", feeds: "资讯热榜",
@@ -577,7 +670,10 @@
       todos: [], countdowns: [], notes: [], shopping: [],
       customQuotes: [],
       layout: { order: lay.slice(), heights: Object.assign({}, heights) },
-      settings: Object.assign({ city: "温州", lat: "27.99", lon: "120.70", autoAdopt: false }, CFG.DEFAULT_SETTINGS || {})
+      settings: Object.assign({
+        city: "温州", lat: "27.99", lon: "120.70", autoAdopt: false,
+        autoFullscreen: true, aiProvider: "deepseek", aiModel: "deepseek-v4-flash", visionProvider: "auto"
+      }, CFG.DEFAULT_SETTINGS || {})
     };
   }
 
@@ -614,26 +710,220 @@
   function getApi() {
     var ov = (localStorage.getItem(LS_API) || "").replace(/\/+$/, "");
     if (ov) { return ov; }
-    var arr = (CFG.API_BASES || []).map(function (s) { return String(s).replace(/\/+$/, ""); }).filter(Boolean);
+    var arr = getApiBases();
     return arr[0] || "";
   }
   function getApiBases() {
+    /* 1. 手机设置里保存的地址列表优先 */
+    var list = [];
+    try {
+      var saved = localStorage.getItem(LS_API_LIST);
+      if (saved) {
+        var arr = JSON.parse(saved);
+        if (Array.isArray(arr)) {
+          list = arr.map(function (s) { return String(s).trim().replace(/\/+$/, ""); }).filter(Boolean);
+        }
+      }
+    } catch (e) {}
+    /* 2. 旧版单地址（LS_API）兼容 */
     var ov = (localStorage.getItem(LS_API) || "").replace(/\/+$/, "");
-    var arr = ov ? [ov] : (CFG.API_BASES || []).map(function (s) { return String(s).replace(/\/+$/, ""); }).filter(Boolean);
-    return arr.length ? arr : [""];
+    if (!list.length && ov) { list = [ov]; }
+    /* 3. config.js 默认列表 */
+    if (!list.length) {
+      list = (CFG.API_BASES || []).map(function (s) { return String(s).replace(/\/+$/, ""); }).filter(Boolean);
+    }
+    /* 4. 把“上次测试最快”的地址排到最前 */
+    var act = (localStorage.getItem(LS_ACTIVE_API) || "").replace(/\/+$/, "");
+    if (act && list.indexOf(act) >= 0) {
+      list = [act].concat(list.filter(function (x) { return x !== act; }));
+    }
+    return list.length ? list : [""];
   }
   function getDataBases() {
-    var arr = (CFG.DATA_BASES || []).map(function (s) { return String(s).replace(/\/+$/, "") + "/"; }).filter(Boolean);
-    if (arr.length) { return arr; }
+    var arr = [];
+    /* 后端 /api/data 最优先：只要后端通，就不依赖被墙的 raw / jsDelivr */
+    var api = getApi();
+    if (api) { arr.push("BACKEND:" + api); }
+    /* config.js 里的镜像列表 */
+    (CFG.DATA_BASES || []).forEach(function (s) {
+      var v = String(s).replace(/\/+$/, "") + "/";
+      if (arr.indexOf(v) < 0) { arr.push(v); }
+    });
+    /* 设置页手填的 raw 兜底 */
     var raw = getRaw();
     if (raw) {
       var m = raw.match(/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/main/);
       if (m) { arr.push("https://cdn.jsdelivr.net/gh/" + m[1] + "/" + m[2] + "@main/"); }
-      arr.push(raw + "/");
+      if (arr.indexOf(raw + "/") < 0) { arr.push(raw + "/"); }
     }
     return arr;
   }
   function getRaw() { return (localStorage.getItem(LS_RAW) || CFG.RAW_BASE || "").replace(/\/+$/, ""); }
+
+  /* 网络状态横幅：在线显示当前后端，离线提示使用缓存 */
+  function setNetBanner(kind, msg) {
+    var el = $("netBanner");
+    if (!el) { return; }
+    if (!kind || !msg) { el.hidden = true; return; }
+    el.hidden = false;
+    el.className = "net-banner " + (kind === "ok" ? "ok" : "err");
+    el.textContent = msg;
+  }
+
+  /* ---------- 全屏模块 ---------- */
+  function isStandaloneApp() {
+    try {
+      if (window.navigator.standalone === true) { return true; }
+      if (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) { return true; }
+    } catch (e) {}
+    return false;
+  }
+  function isFullscreenNow() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function enterFullscreen() {
+    var el = document.documentElement;
+    if (el.requestFullscreen) { return el.requestFullscreen(); }
+    if (el.webkitRequestFullscreen) { return el.webkitRequestFullscreen(); }
+    return Promise.reject(new Error("当前浏览器不支持全屏"));
+  }
+  function exitFullscreen() {
+    if (document.exitFullscreen) { document.exitFullscreen(); }
+    else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
+  }
+  function updateFsButton() {
+    var b = $("btnFullscreen");
+    if (b) { b.textContent = isFullscreenNow() ? "✕" : "⛶"; }
+  }
+  var autoFullTried = false;
+  function tryAutoFullscreen() {
+    if (autoFullTried || isStandaloneApp() || isFullscreenNow()) { return; }
+    if (!data.settings.autoFullscreen) { return; }
+    autoFullTried = true;
+    enterFullscreen().catch(function () {});
+  }
+
+  /* ---------- AI 模型选择（手机端） ---------- */
+  var MODEL_FALLBACK = [
+    { provider: "deepseek", model: "deepseek-v4-flash", label: "DeepSeek · deepseek-v4-flash", vision: false },
+    { provider: "deepseek", model: "deepseek-v4-pro", label: "DeepSeek · deepseek-v4-pro", vision: true },
+    { provider: "zhipu", model: "glm-4.6v-flash", label: "智谱 GLM · glm-4.6v-flash", vision: true },
+    { provider: "openai", model: "gpt-4o-mini", label: "OpenAI · gpt-4o-mini", vision: true }
+  ];
+  function getModelCache() {
+    try {
+      var s = JSON.parse(localStorage.getItem(LS_MODELS_CACHE) || "null");
+      if (s && Array.isArray(s.models)) { return s; }
+    } catch (e) {}
+    return { models: MODEL_FALLBACK.slice() };
+  }
+  function getAiChoice() {
+    try {
+      var s = JSON.parse(localStorage.getItem(LS_AI_MODEL) || "null");
+      if (s && s.provider && s.model) { return s; }
+    } catch (e) {}
+    return { provider: data.settings.aiProvider || "deepseek", model: data.settings.aiModel || "deepseek-v4-flash" };
+  }
+  function getVisionChoice() {
+    var v = (localStorage.getItem(LS_AI_VISION) || "").trim();
+    if (v) { return v; }
+    return data.settings.visionProvider || "auto";
+  }
+  function renderModelOptions() {
+    var sel = $("setAiModel");
+    if (!sel) { return; }
+    var cur = getAiChoice();
+    var models = (getModelCache().models || MODEL_FALLBACK).filter(function (m) { return m && m.provider && m.model; });
+    sel.innerHTML = models.map(function (m) {
+      var val = m.provider + ":" + m.model;
+      return '<option value="' + escAttr(val) + '"' +
+        (cur.provider === m.provider && cur.model === m.model ? " selected" : "") + ">" +
+        esc(m.label || val) + "</option>";
+    }).join("");
+    var v = $("setVisionProvider");
+    if (v) { v.value = getVisionChoice(); }
+  }
+  function saveAiChoice() {
+    var sel = $("setAiModel");
+    var parts = String(sel ? sel.value : "deepseek:deepseek-v4-flash").split(":");
+    var provider = parts[0] || "deepseek";
+    var model = parts.slice(1).join(":");
+    var vision = ($("setVisionProvider") || {}).value || "auto";
+    try {
+      localStorage.setItem(LS_AI_MODEL, JSON.stringify({ provider: provider, model: model }));
+      localStorage.setItem(LS_AI_VISION, vision);
+    } catch (e) {}
+    data.settings.aiProvider = provider;
+    data.settings.aiModel = model;
+    data.settings.visionProvider = vision;
+    persistData();
+    return { provider: provider, model: model, visionProvider: vision };
+  }
+
+  /* ---------- 后端地址探活与模型列表 ---------- */
+  function renderApiProbe(rows) {
+    var box = $("apiProbe");
+    if (!box) { return; }
+    box.innerHTML = rows.map(function (r) {
+      return '<div class="api-row"><span class="url">' + esc(r.base || "(未填)") + "</span>" +
+        '<span class="api-badge ' + r.cls + '">' + esc(r.label) + "</span></div>";
+    }).join("");
+    var hint = $("activeApiHint");
+    if (hint) {
+      var act = (localStorage.getItem(LS_ACTIVE_API) || "").replace(/\/+$/, "");
+      hint.textContent = act ? "当前生效地址：" + act : "尚未确定可用地址（请点“测试连接”）";
+    }
+  }
+  function probeApis() {
+    var bases = getApiBases();
+    var rows = bases.map(function (b) { return { base: b, cls: "busy", label: "测试中…" }; });
+    renderApiProbe(rows);
+    var jobs = bases.map(function (base) {
+      if (!base) { return Promise.resolve({ base: "", ok: false, ms: 0 }); }
+      return getJSON(base + "/api/ping", 6000).then(function (j) {
+        if (j && j.ok) {
+          return { base: base, ok: true, ms: j._ms || 0, info: (j.ai ? j.ai.provider + ":" + j.ai.model : "") };
+        }
+        return { base: base, ok: false, ms: 0 };
+      }).catch(function () { return { base: base, ok: false, ms: 0 }; });
+    });
+    return Promise.all(jobs).then(function (rs) {
+      var okList = rs.filter(function (r) { return r.ok; }).sort(function (a, b) { return a.ms - b.ms; });
+      if (okList.length) {
+        try { localStorage.setItem(LS_ACTIVE_API, okList[0].base); } catch (e) {}
+        setNetBanner("ok", "在线：已连接后端 " + okList[0].base);
+      } else {
+        try { localStorage.removeItem(LS_ACTIVE_API); } catch (e) {}
+      }
+      renderApiProbe(bases.map(function (b) {
+        var r = rs[bases.indexOf(b)];
+        return {
+          base: b,
+          cls: r && r.ok ? "ok" : "err",
+          label: r && r.ok ? ("可用 " + r.ms + "ms" + (r.info ? " · " + r.info : "")) : "不可用"
+        };
+      }));
+      return okList.length ? okList[0].base : "";
+    });
+  }
+  function fetchModels() {
+    var bases = getApiBases().filter(Boolean);
+    if (!bases.length) { return Promise.resolve(null); }
+    return bases.reduce(function (p, base) {
+      return p.then(function (res) {
+        if (res) { return res; }
+        return getJSON(base + "/api/ping", 6000)
+          .then(function (j) { return (j && j.ok) ? j : null; })
+          .catch(function () { return null; });
+      });
+    }, Promise.resolve(null)).then(function (j) {
+      if (j && Array.isArray(j.models)) {
+        try { localStorage.setItem(LS_MODELS_CACHE, JSON.stringify({ models: j.models, time: nowISO() })); } catch (e) {}
+      }
+      renderModelOptions();
+      return j;
+    });
+  }
 
   /* ---------- 网络 ---------- */
   function postJSON(url, body, timeoutMs) {
@@ -663,8 +953,28 @@
     });
   }
 
+  /* GET 请求（探活 / /api/data 用），返回 JSON；超时抛错 */
+  function getJSON(url, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      var ctrl = ("AbortController" in window) ? new AbortController() : null;
+      var start = Date.now();
+      var timer = setTimeout(function () { if (ctrl) { ctrl.abort(); } }, timeoutMs || 8000);
+      fetch(url, { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+        .then(function (r) {
+          if (!r.ok) { throw 0; }
+          return r.json();
+        })
+        .then(function (j) { j._ms = Date.now() - start; resolve(j); })
+        .catch(function (e) {
+          if (e && e.name === "AbortError") { reject(new Error("请求超时")); }
+          else { reject(e); }
+        })
+        .finally(function () { clearTimeout(timer); });
+    });
+  }
+
   /* 按配置的后端地址列表顺序尝试，超时自动换下一个 */
-  function postJSONMulti(path, body) {
+  function postJSONMulti(path, body, timeoutMs, onTry) {
     var bases = getApiBases();
     return new Promise(function (resolve, reject) {
       var errs = [];
@@ -673,7 +983,8 @@
           reject(new Error(errs.length ? errs[errs.length - 1] : "后端地址不可用"));
           return;
         }
-        postJSON(bases[i] + path, body, 12000).then(resolve).catch(function (e) {
+        if (onTry) { onTry(i, bases[i], bases.length); }
+        postJSON(bases[i] + path, body, timeoutMs || 20000).then(resolve).catch(function (e) {
           errs.push(e.message);
           next(i + 1);
         });
@@ -685,12 +996,29 @@
   function fetchJsonFirst(bases, name, timeoutMs) {
     return new Promise(function (resolve) {
       (function next(i) {
-        if (i >= bases.length) { resolve(null); return; }
+        if (i >= bases.length) {
+          setNetBanner("err", "离线模式：所有数据源不可达，正在使用本机缓存");
+          resolve(null);
+          return;
+        }
         var ctrl = ("AbortController" in window) ? new AbortController() : null;
         var timer = setTimeout(function () { if (ctrl) { ctrl.abort(); } }, timeoutMs || 10000);
-        fetch(bases[i] + name, { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+        var isBackend = bases[i].indexOf("BACKEND:") === 0;
+        var url;
+        if (isBackend) {
+          /* 后端 /api/data 只用于 data.json；feeds.json 等不走它 */
+          if (name !== "data.json") { clearTimeout(timer); next(i + 1); return; }
+          url = bases[i].slice(8) + "/api/data";
+        } else {
+          url = bases[i] + name;
+        }
+        fetch(url, { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
           .then(function (r) { if (!r.ok) { throw 0; } return r.json(); })
-          .then(function (j) { clearTimeout(timer); resolve(j); })
+          .then(function (j) {
+            clearTimeout(timer);
+            setNetBanner("ok", "在线：已连接" + (isBackend ? "后端 " + bases[i].slice(8) : "数据源"));
+            resolve(j);
+          })
           .catch(function () { clearTimeout(timer); next(i + 1); });
       })(0);
     });
@@ -708,6 +1036,21 @@
   var aiResult = null;
   var adopt = { todos: [], countdowns: [], notes: [], shopping: [] };
   var processing = false;
+
+  /* 秘书对话：气泡 + 多轮修订历史 */
+  var chatHistory = [];
+  function appendChat(role, text) {
+    var box = $("chatList");
+    if (!box) { return; }
+    var div = document.createElement("div");
+    div.className = "chat-msg " + role;
+    div.textContent = text || "";
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+  }
+  function chatMsgForUser(text) {
+    return text ? text : (pendingImage ? "📷 图片（识别内容见下方安排）" : "");
+  }
 
   function fileToDataURL(file) {
     return new Promise(function (resolve, reject) {
@@ -838,18 +1181,42 @@
     $("resultMarkdown").textContent = aiResult.markdown || "（无 Markdown）";
   }
 
-  function doProcess() {
+  function doProcess(isRevision) {
     if (processing) { return; }
-    var text = $("inputText").value.trim();
-    if (!text && !pendingImage) { setStatus("procStatus", "请先输入文字或添加图片", true); return; }
+    var text = isRevision ? $("chatInput").value.trim() : $("inputText").value.trim();
+    if (!isRevision && !text && !pendingImage) { setStatus("procStatus", "请先输入文字或添加图片", true); return; }
+    if (isRevision && !text) { setStatus("procStatus", "请先输入要修改的内容", true); return; }
     var pin = getPin();
     if (!pin) { setStatus("procStatus", "请先在“设置”里填写口令（APP_PIN）", true); return; }
     var api = getApi();
     if (!api) { setStatus("procStatus", "请先在“设置”里填写 Vercel 后端地址", true); return; }
+    var aiChoice = getAiChoice();
+    var vision = getVisionChoice();
     processing = true;
     $("btnProcess").disabled = true;
-    setStatus("procStatus", "AI 秘书正在分析…");
-    postJSONMulti("/api/process", { text: text, imageBase64: pendingImage || "", pin: pin }).then(function (res) {
+    $("btnChatSend").disabled = true;
+    setStatus("procStatus", "AI 秘书正在分析…（模型：" + aiChoice.model + "）");
+    $("chatBox").hidden = false;
+    if (isRevision) {
+      appendChat("user", text);
+      $("chatInput").value = "";
+      chatHistory.push({ role: "user", content: text });
+    } else {
+      var userMsg = chatMsgForUser(text);
+      if (userMsg) { appendChat("user", userMsg); }
+      chatHistory.push({ role: "user", content: text || "[图片]" });
+    }
+    postJSONMulti("/api/process", {
+      text: text,
+      imageBase64: isRevision ? "" : (pendingImage || ""),
+      pin: pin,
+      provider: aiChoice.provider,
+      model: aiChoice.model,
+      visionProvider: vision,
+      history: isRevision ? chatHistory.slice(-8) : []
+    }, 45000, function (i, base, total) {
+      setStatus("procStatus", "AI 秘书正在分析…（尝试第 " + (i + 1) + "/" + total + " 个后端：" + base + "）");
+    }).then(function (res) {
       aiResult = normalizeAI(res);
       adopt = {
         todos: aiResult.todos.map(function () { return true; }),
@@ -859,21 +1226,28 @@
       };
       $("resultPanel").hidden = false;
       renderResult();
+      var summary = aiResult.summary ? aiResult.summary : "";
+      var plan = (aiResult.plan || []).map(function (p) { return "• " + planText(p); }).join("\n");
+      var bubble = summary + (plan ? "\n今日安排：\n" + plan : "");
+      appendChat("assistant", bubble || "已更新安排，请查看下方面板。");
+      chatHistory.push({ role: "assistant", content: bubble || "已更新安排" });
+      if (chatHistory.length > 16) { chatHistory = chatHistory.slice(-16); }
       if (data.settings.autoAdopt) {
-        setStatus("procStatus", "已开启自动采纳，正在保存…");
+        setStatus("procStatus", "已开启自动采纳，正在保存…（模型：" + res.model + "）");
         return adoptAndSave().then(function () {
-          setStatus("procStatus", "自动采纳并保存完成 ✔");
+          setStatus("procStatus", "自动采纳并保存完成 ✔（模型：" + res.model + "）");
         }).catch(function (e) {
           setStatus("procStatus", "自动保存失败：" + e.message, true);
         });
       }
-      setStatus("procStatus", "处理完成，请确认安排后保存");
+      setStatus("procStatus", "处理完成，请确认安排后保存（模型：" + res.model + "）");
       return null;
     }).catch(function (e) {
       setStatus("procStatus", "处理失败：" + e.message + "（确认后端已部署、口令正确）", true);
     }).finally(function () {
       processing = false;
       $("btnProcess").disabled = false;
+      $("btnChatSend").disabled = false;
     });
   }
 
@@ -991,7 +1365,7 @@
 
   /* ---------- 设置页 ---------- */
   function fillSettings() {
-    $("setApi").value = getApi() || "";
+    $("setApiList").value = getApiBases().filter(Boolean).join("\n");
     $("setRaw").value = getRaw() || "";
     $("setPin").value = getPin() || "";
     $("setCity").value = data.settings.city || "";
@@ -1002,6 +1376,13 @@
     $("setUpdateHours").value = data.settings.updateHours != null ? data.settings.updateHours : 4;
     $("setPushHour").value = data.settings.pushHour != null ? data.settings.pushHour : 8;
     $("autoAdopt").checked = !!data.settings.autoAdopt;
+    $("autoFullscreen").checked = data.settings.autoFullscreen !== false;
+    renderModelOptions();
+    var hint = $("activeApiHint");
+    if (hint) {
+      var act = (localStorage.getItem(LS_ACTIVE_API) || "").replace(/\/+$/, "");
+      hint.textContent = act ? "当前生效地址：" + act : "尚未确定可用地址（请点“测试连接”）";
+    }
   }
 
   function renderLayout() {
@@ -1791,12 +2172,44 @@
     setStatus("dashStatus", "图片已保存到手机下载目录（长按可存相册）");
   }
 
+  function dashShare() {
+    var c = $("dashCanvas");
+    if (!c || !c.toBlob) { dashSave(); return; }
+    c.toBlob(function (blob) {
+      if (!blob) { setStatus("dashStatus", "生成分享图片失败", true); return; }
+      try {
+        var file = new File([blob], "aidash_" + (data.settings.layoutPreset || "portrait") + ".png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: "AiDash 仪表盘", text: "我的 AiDash 仪表盘" }).then(function () {
+            setStatus("dashStatus", "已分享 ✔");
+          }).catch(function (e) {
+            if (e && e.name === "AbortError") { return; }
+            dashSave();
+          });
+          return;
+        }
+      } catch (e) {}
+      dashSave();
+    }, "image/png");
+  }
+  function openWallGuide() {
+    var c = $("dashCanvas");
+    try {
+      $("wallOverlayImg").src = c.toDataURL("image/png");
+      $("wallOverlay").className = "dash-overlay open";
+    } catch (e) {
+      setStatus("dashStatus", "请先生成预览再设壁纸", true);
+    }
+  }
   function bindDash() {
     $("btnDashGen").addEventListener("click", function () { dashGenerate(false); });
     $("btnDashRefresh").addEventListener("click", function () { dashGenerate(true); });
     $("btnDashFull").addEventListener("click", dashOpenFull);
     $("btnDashSave").addEventListener("click", dashSave);
+    $("btnDashShare").addEventListener("click", dashShare);
+    $("btnDashWall").addEventListener("click", openWallGuide);
     $("btnDashOverlayClose").addEventListener("click", function () { $("dashOverlay").className = "dash-overlay"; });
+    $("btnWallClose").addEventListener("click", function () { $("wallOverlay").className = "dash-overlay"; });
   }
 
   function renderAll() {
@@ -1866,7 +2279,11 @@
       $("previewWrap").hidden = true;
       $("previewImg").src = "";
     });
-    $("btnProcess").addEventListener("click", doProcess);
+    $("btnProcess").addEventListener("click", function () { doProcess(false); });
+    $("btnChatSend").addEventListener("click", function () { doProcess(true); });
+    $("chatInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { doProcess(true); }
+    });
     $("btnAdoptAll").addEventListener("click", function () {
       if (!aiResult) { return; }
       aiResult.todos.forEach(function (_, i) { adopt.todos[i] = true; });
@@ -2056,19 +2473,35 @@
       setStatus("quoteStatus", "已清除今日指定，恢复正常轮换");
     });
     $("btnSaveQuotes").addEventListener("click", function () { saveToCloud("quoteStatus").catch(function () {}); });
+    $("btnProbeApis").addEventListener("click", function () {
+      setStatus("connStatus", "正在测试所有地址…");
+      probeApis().then(function (active) {
+        setStatus("connStatus", active ? "测试完成，当前生效：" + active + " ✔" : "所有地址均不可用", !active);
+      });
+    });
     $("btnSaveConn").addEventListener("click", function () {
-      var api = $("setApi").value.trim().replace(/\/+$/, "");
+      var lines = ($("setApiList").value || "").split(/\r?\n/)
+        .map(function (s) { return s.trim().replace(/\/+$/, ""); })
+        .filter(Boolean);
       var raw = $("setRaw").value.trim().replace(/\/+$/, "");
       var pin = $("setPin").value.trim();
       if (pin && (pin.length < 4 || pin.length > 6)) { setStatus("connStatus", "口令需为 4~6 位", true); return; }
       try {
-        /* 后端地址没改动时不要写覆盖，保留 config.js 的多地址自动切换 */
-        var defApi = String((CFG.API_BASES && CFG.API_BASES[0]) || "").replace(/\/+$/, "");
-        if (api && api !== defApi) { localStorage.setItem(LS_API, api); } else { localStorage.removeItem(LS_API); }
+        if (lines.length) { localStorage.setItem(LS_API_LIST, JSON.stringify(lines)); }
+        else { localStorage.removeItem(LS_API_LIST); }
+        localStorage.removeItem(LS_API); /* 旧单地址字段不再使用 */
         if (raw) { localStorage.setItem(LS_RAW, raw); } else { localStorage.removeItem(LS_RAW); }
         if (pin) { localStorage.setItem(LS_PIN, pin); } else { localStorage.removeItem(LS_PIN); }
       } catch (e) {}
-      setStatus("connStatus", "连接信息已保存 ✔");
+      setStatus("connStatus", "连接信息已保存 ✔，正在自动测试…");
+      probeApis().then(function (active) {
+        setStatus("connStatus", active ? "已保存并测试完成，当前生效：" + active : "已保存，但所有地址暂不可用（联网后可重试）", !active);
+      });
+    });
+    $("btnSaveAi").addEventListener("click", function () {
+      var c = saveAiChoice();
+      setStatus("aiStatus", "已保存本机：" + c.provider + " / " + c.model + " ｜ 识图：" + c.visionProvider + "，正在同步云端…");
+      saveToCloud("aiStatus").catch(function () {});
     });
     $("btnSaveLoc").addEventListener("click", function () {
       data.settings.city = $("setCity").value.trim() || "温州";
@@ -2081,6 +2514,11 @@
       data.settings.autoAdopt = $("autoAdopt").checked;
       persistData();
       setStatus("settingsStatus", "自动采纳：" + (data.settings.autoAdopt ? "开" : "关") + " ✔");
+    });
+    $("autoFullscreen").addEventListener("change", function () {
+      data.settings.autoFullscreen = $("autoFullscreen").checked;
+      persistData();
+      setStatus("settingsStatus", "自动全屏：" + (data.settings.autoFullscreen ? "开" : "关") + " ✔");
     });
     $("layoutList").addEventListener("click", function (e) {
       var el = e.target;
@@ -2119,6 +2557,17 @@
     document.querySelectorAll(".tab-bar button").forEach(function (b) {
       b.addEventListener("click", function () { showTab(b.dataset.tab); });
     });
+    var fsBtn = $("btnFullscreen");
+    if (fsBtn) {
+      fsBtn.addEventListener("click", function () {
+        if (isFullscreenNow()) { exitFullscreen(); }
+        else { enterFullscreen().catch(function () { setStatus("settingsStatus", "当前浏览器不支持自动全屏", true); }); }
+      });
+    }
+    document.addEventListener("pointerdown", tryAutoFullscreen, { passive: true });
+    document.addEventListener("touchstart", tryAutoFullscreen, { passive: true });
+    document.addEventListener("fullscreenchange", updateFsButton);
+    document.addEventListener("webkitfullscreenchange", updateFsButton);
     bindRecord();
     bindResultEvents();
     bindTodo();
@@ -2140,6 +2589,10 @@
     showTab("record");
     registerSW();
     setInterval(renderHeaderDate, 60000);
+    window.addEventListener("offline", function () { setNetBanner("err", "当前离线：只能查看本机缓存"); });
+    window.addEventListener("online", function () { setNetBanner("ok", "网络已恢复，正在重新连接…"); probeApis(); });
+    fetchModels();
+    probeApis();
     fetchRemoteData(false);
   }
 

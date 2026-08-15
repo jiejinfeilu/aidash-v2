@@ -81,22 +81,25 @@ aidash/
 
 ### 第 3 步：Vercel 部署后端（详见 docs/C-backend.md）
 
-1. vercel.com → Add New → Project → Import `aidash`；
+1. vercel.com → Add New → Project → Import `aidash-v2`；
 2. Framework Preset 选 **Other**，构建命令留空；
-3. 添加 9 个环境变量（`AI_PROVIDER`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、
-   `OPENAI_API_KEY`、`OPENAI_MODEL`、`GITHUB_TOKEN`、`GITHUB_REPO`、`GITHUB_BRANCH`、`APP_PIN`）；
-4. Deploy，记下地址 `https://aidash-xxxxx.vercel.app`；
-5. 用文档里的 curl 命令测一下 `/api/process` 和 `/api/save`。
+3. 添加环境变量：`AI_PROVIDER`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`（默认 `deepseek-v4-flash`）、
+   `ZHIPU_API_KEY`（识图用，免费）、`ZHIPU_MODEL`（`glm-4.6v-flash`）、`VISION_PROVIDER`（`auto`）、
+   `ALLOWED_AI_MODELS`（模型白名单）、`OPENAI_API_KEY`、`OPENAI_MODEL`、
+   `GITHUB_TOKEN`、`GITHUB_REPO`、`GITHUB_BRANCH`、`APP_PIN`；
+4. Deploy，记下地址 `https://aidash-v2-xxxxx.vercel.app`；
+5. 用文档里的 curl 命令测一下 `/api/process`、`/api/save`、`/api/ping`。
 
 ### 第 4 步：手机安装 PWA 并连接
 
 1. 手机浏览器打开 `https://jiejinfeilu.github.io/aidash-v2/web/`；
 2. iPhone：分享按钮 → **添加到主屏幕**（安卓：菜单 → 添加到主屏幕/安装应用）；
 3. 打开 App → 设置 → 连接：
-   - 后端地址：`https://aidash-xxxxx.vercel.app`
-   - GitHub 数据地址：`https://raw.githubusercontent.com/你的用户名/aidash/main`
+   - 后端地址列表（每行一个，自动切换）：`https://aidash-v2-xxxxx.vercel.app`
+   - GitHub 数据地址：`https://raw.githubusercontent.com/jiejinfeilu/aidash-v2/main`
    - 口令：与 `APP_PIN` 相同
-4. 保存连接，回“记录”页测试一次“AI 秘书处理”。
+4. 保存连接（自动测试并记住最快地址），到“设置 → AI 模型”选分析模型和识图引擎；
+5. 回“记录”页测试：文字/拍照 → AI 秘书处理 → 秘书对话里可继续修改 → 保存到云端。
 
 ### 第 5 步：配置定时任务（详见 docs/F-scheduling.md）
 
@@ -114,10 +117,10 @@ aidash/
 ### 第 7 步：验收清单
 
 - [ ] 手机上输入“周六前把房租转给房东”→ AI 给出高优先级待办且截止日期是周六
-- [ ] 点“保存到云端”→ GitHub 仓库出现 `data.json` 和 `data.md`- [ ]点击“保存到云端”→ GitHub 仓库出现`data.json`和`data.md`
+- [ ] 点“保存到云端”→ GitHub 仓库出现 `data.json` 和 `data.md`
 - [ ] 仓库 Actions 里 “Fetch Hotlists” 显示成功，`feeds.json` 有内容
-- [ ] 手动 Run “Daily Kindle Push” 成功，Kindle 收到书- [ ]手动运行“每日Kindle推送”成功，Kindle收到书籍
-- [ ] Kindle 锁屏显示全屏仪表盘（含天气、热榜、你的待办）- [ ]Kindle锁屏显示全屏仪表盘（含天气、热榜、你的待办）
+- [ ] 手动 Run “Daily Kindle Push” 成功，Kindle 收到书
+- [ ] Kindle 锁屏显示全屏仪表盘（含天气、热榜、你的待办）
 
 ---
 
@@ -125,7 +128,7 @@ aidash/
 
 **早上（自动化）**
 
-07:30 前后 GitHub Actions 自动生成今天的仪表盘并发到 Kindle。07:30前后GitHub Actions自动生成今天的仪表盘并发到Kindle。
+07:30 前后 GitHub Actions 自动生成今天的仪表盘并发到 Kindle。
 你只需：打开 Kindle 上今天那本书 → 锁屏 → 屏保就是仪表盘。
 
 **白天（随手记）**
@@ -133,8 +136,9 @@ aidash/
 1. 打开手机 AiDash → “记录”；
 2. 打字，或拍便签/截图；
 3. 点“AI 秘书处理”→ 预览安排（优先级/日期/理由）；
-4. 逐条勾选或一键采纳 → “保存到云端”；
-5. 明天的仪表盘就会带上这些安排。
+4. 在“秘书对话”里可以直接说“房租改成下周一”等继续修改；
+5. 逐条勾选或一键采纳 → “保存到云端”；
+6. 明天的仪表盘就会带上这些安排。
 
 **随时调整**
 
@@ -165,13 +169,15 @@ python send_to_kindle.py              # 生成并推送
 |---|---|
 | 手机提示口令错误 401 | 手机口令与 Vercel `APP_PIN` 不一致 |
 | AI 调用失败 502 | 检查 `DEEPSEEK_API_KEY`、余额、模型名 |
+| 图片上传 AI 报错 | 识图引擎设 `auto` 或 `zhipu`，并确认 Vercel 已配 `ZHIPU_API_KEY` |
+| 手机端怎么换模型 | 设置 → AI 模型 → 选 DeepSeek V4 Flash / Pro 等 → 保存（Key 共用） |
 | 保存失败 502 | 检查 `GITHUB_TOKEN` 权限（Contents 读写）和 `GITHUB_REPO` 格式 |
 | 收不到 Kindle 推送 | 国际账户 `@kindle.com`；发件邮箱加白名单；Kindle 连 Wi-Fi |
 | Kindle 休眠显示广告 | 带特惠版，需在 amazon.com 移除广告 |
 | 封面不是仪表盘 | 打开今天那本书后再休眠 |
 | 页面打不开 | 等 Pages 更新 1~3 分钟；用 https 地址 |
 | 图片太大 | 前端会自动压缩；仍失败就换个更小的图 |
-| 想换 AI | Vercel 里 `AI_PROVIDER=openai` 并填 `OPENAI_API_KEY` |
+| 想换 AI | 手机端设置 → AI 模型直接选；或在 Vercel 改 `AI_PROVIDER` / `DEEPSEEK_MODEL` |
 
 详细排查见各部分的 docs 文档。
 
@@ -183,5 +189,3 @@ python send_to_kindle.py              # 生成并推送
 - `APP_PIN` 是唯一能调用你后端的口令，别设成 `1234` 这类常见数字；
 - fine-grained Token 只授权 `aidash` 一个仓库、只勾 Contents 读写；
 - 公开仓库里不写任何密钥；介意隐私可把仓库设为 Private（需自行确认免费版 Pages 可用）。
-
-- v2 已连接 Vercel

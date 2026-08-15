@@ -1,29 +1,137 @@
 /* ================================================================
-   AI 调用封装：DeepSeek（默认）/ OpenAI 双模式
-   两者都是 OpenAI 兼容格式，识别图片时把 base64 图片作为
-   image_url 传入（DeepSeek V4 与 OpenAI 视觉模型均支持）。
+   AI 调用封装（v2 修复版）
+   - 分析模型（秘书）：DeepSeek（默认）/ OpenAI / 智谱 GLM
+   - 识图引擎（眼睛）：zhipu / deepseek / openai / auto / none
+   - 三家均为 OpenAI 兼容 Chat Completions 格式
+   - 所有 Key 只来自环境变量，绝不写进前端
    ================================================================ */
 var https = require("https");
 
-/* 两家服务商的配置：base 地址、请求路径、默认模型、环境变量名 */
+/* 三家服务商配置 */
 var PROVIDERS = {
   deepseek: {
     base: "https://api.deepseek.com",
     chatPath: "/chat/completions",
-    model: "deepseek-chat",
+    model: "deepseek-v4-flash",   /* 默认模型；可用 DEEPSEEK_MODEL 覆盖 */
     envKey: "DEEPSEEK_API_KEY",
-    envModel: "DEEPSEEK_MODEL"
+    envModel: "DEEPSEEK_MODEL",
+    label: "DeepSeek"
   },
   openai: {
     base: "https://api.openai.com",
     chatPath: "/v1/chat/completions",
     model: "gpt-4o-mini",
     envKey: "OPENAI_API_KEY",
-    envModel: "OPENAI_MODEL"
+    envModel: "OPENAI_MODEL",
+    label: "OpenAI"
+  },
+  zhipu: {
+    base: "https://open.bigmodel.cn/api/paas/v4",
+    chatPath: "/chat/completions",
+    model: "glm-4.6v-flash",      /* 智谱免费视觉模型 */
+    envKey: "ZHIPU_API_KEY",
+    envModel: "ZHIPU_MODEL",
+    label: "智谱 GLM"
   }
 };
 
-/* 发起 HTTPS POST，返回解析后的 JSON；非 2xx 时抛出错误 */
+/* 默认白名单：手机端只能在这些模型里选（防止乱填烧钱） */
+var DEFAULT_ALLOWED = [
+  "deepseek:deepseek-v4-flash",
+  "deepseek:deepseek-v4-pro",
+  "zhipu:glm-4.6v-flash",
+  "openai:gpt-4o-mini"
+];
+
+function normalizeKey(s) { return String(s || "").trim().toLowerCase(); }
+
+/* 判断某 provider + model 是否支持图片输入 */
+function hasVision(provider, model) {
+  var p = normalizeKey(provider);
+  var m = String(model || "").toLowerCase();
+  if (p === "zhipu") { return /glm-4(\.\d+)?v/.test(m); }
+  if (p === "deepseek") {
+    /* 用户实测 deepseek-v4-pro(0813) 原生支持识图；flash/chat 仍为纯文本 */
+    return m.indexOf("deepseek-v4-pro") === 0;
+  }
+  if (p === "openai") { return /gpt-4o|gpt-4\.1|gpt-5/.test(m); }
+  return false;
+}
+
+/* 读取白名单：ALLOWED_AI_MODELS（换行/逗号/分号分隔 "provider:model"） */
+function listAllowedModels(env) {
+  env = env || process.env;
+  var raw = String(env.ALLOWED_AI_MODELS || "").trim();
+  var pairs = raw ? raw.split(/[\n,;]+/) : DEFAULT_ALLOWED.slice();
+  var out = [];
+  pairs.forEach(function (s) {
+    s = String(s).trim();
+    if (!s) { return; }
+    var i = s.indexOf(":");
+    if (i <= 0) { return; }
+    var provider = s.slice(0, i).trim().toLowerCase();
+    var model = s.slice(i + 1).trim();
+    var meta = PROVIDERS[provider];
+    if (!meta || !model) { return; }
+    out.push({
+      provider: provider,
+      model: model,
+      label: meta.label + " · " + model,
+      vision: hasVision(provider, model)
+    });
+  });
+  return out;
+}
+
+/* 解析本次要用的秘书模型；客户端显式指定时必须命中白名单 */
+function resolveSecretary(env, body) {
+  env = env || process.env;
+  body = body || {};
+  var providerName = normalizeKey(body.provider || env.AI_PROVIDER || "deepseek");
+  var meta = PROVIDERS[providerName];
+  if (!meta) { throw new Error("AI_PROVIDER 仅支持 deepseek / openai / zhipu"); }
+  var model = String(body.model || env[meta.envModel] || meta.model).trim();
+  if (!model) { throw new Error("模型名为空"); }
+  var explicit = String(body.provider || "").trim() || String(body.model || "").trim();
+  if (explicit) {
+    var hit = listAllowedModels(env).some(function (m) {
+      return m.provider === providerName && m.model === model;
+    });
+    if (!hit) {
+      throw new Error("该模型不在白名单（ALLOWED_AI_MODELS），请先在 Vercel 环境变量里配置");
+    }
+  }
+  return { provider: providerName, model: model, meta: meta, vision: hasVision(providerName, model) };
+}
+
+/* 解析识图引擎：
+   none                      -> 关闭识图
+   auto                      -> 秘书模型能看图就单次调用；否则用智谱兜底
+   deepseek / zhipu / openai -> 强制指定；可逗号写多个按顺序兜底 */
+function visionChain(env, secretary, visionProviderRaw) {
+  env = env || process.env;
+  var raw = normalizeKey(visionProviderRaw || env.VISION_PROVIDER || "auto");
+  if (!raw || raw === "none") { return { mode: "none", chain: [] }; }
+  if (raw === "auto") {
+    if (secretary.vision) { return { mode: "single", chain: [] }; }
+    var autoChain = [];
+    if (env.ZHIPU_API_KEY) {
+      autoChain.push({ provider: "zhipu", model: String(env[PROVIDERS.zhipu.envModel] || PROVIDERS.zhipu.model).trim() });
+    }
+    return { mode: "two", chain: autoChain };
+  }
+  var chain = [];
+  raw.split(",").forEach(function (s) {
+    s = s.trim();
+    if (!s) { return; }
+    var meta = PROVIDERS[s];
+    if (!meta) { return; }
+    chain.push({ provider: s, model: String(env[meta.envModel] || meta.model).trim() });
+  });
+  return { mode: "two", chain: chain };
+}
+
+/* 发起 HTTPS POST，返回解析后的 JSON；非 2xx 时抛错 */
 function httpsJsonPost(urlStr, headers, body, timeoutMs) {
   return new Promise(function (resolve, reject) {
     var url = new URL(urlStr);
@@ -48,67 +156,17 @@ function httpsJsonPost(urlStr, headers, body, timeoutMs) {
         }
       });
     });
-    req.setTimeout(timeoutMs || 60000, function () {
-      req.destroy(new Error("AI 请求超时"));
-    });
+    req.setTimeout(timeoutMs || 60000, function () { req.destroy(new Error("AI 请求超时")); });
     req.on("error", reject);
     req.write(JSON.stringify(body));
     req.end();
   });
 }
 
-/* 组装“秘书”角色的消息：系统提示 + 用户文字 + 可选图片 */
-function buildSecretaryMessages(input) {
-  var today = input.today || "";
-  var system =
-    "你是我的资深私人助理（秘书）。请把用户随手记录的文字和图片（手写便签、屏幕截图、票据、备忘录等）理解清楚，像贴心秘书一样给出安排，而不是机械分类。\n" +
-    "\n" +
-    "工作要求：\n" +
-    "1. 从信息中提炼“可执行事项”放入 todos，判断优先级（高/中/低），并给出建议完成日期 dueDate（格式 YYYY-MM-DD；仅当信息中出现日期、截止日或相对时间词（如“周六”“下周一”“月底”）时，根据今天日期推算填写；否则填空字符串），每条都要有 reason（一句话说明为什么这样安排）。\n" +
-    "2. 有明确日期的事件（如“10月3日参加婚礼”）要同时放入 countdowns（name 用事件名，date 用 YYYY-MM-DD）和 todos。\n" +
-    "3. 纯想法、灵感、知识、备忘放进 notes，tags 给 1~3 个简短标签；买东西的需求放进 shopping。\n" +
-    "4. plan 给出“今天应该优先做的事”，按优先级和截止日期排序，每项一句话。\n" +
-    "5. 图片中的文字必须全部读取并纳入分析；不要编造图片里没有的信息；如果图片和文字都有，以两者结合为准。\n" +
-    "\n" +
-    "输出要求：\n" +
-    "- 只输出一个合法 JSON 对象，不要输出任何其他文字。\n" +
-    "- JSON 结构固定为：\n" +
-    "{\n" +
-    "  \"summary\": \"一句话总结这条信息\",\n" +
-    "  \"plan\": [\"今天优先：…\", \"…\"],\n" +
-    "  \"todos\": [{\"text\": \"…\", \"priority\": \"高|中|低\", \"dueDate\": \"YYYY-MM-DD 或空字符串\", \"reason\": \"…\"}],\n" +
-    "  \"countdowns\": [{\"name\": \"…\", \"date\": \"YYYY-MM-DD\"}],\n" +
-    "  \"notes\": [{\"text\": \"…\", \"tags\": [\"标签1\", \"标签2\"]}],\n" +
-    "  \"shopping\": [{\"text\": \"…\"}],\n" +
-    "  \"markdown\": \"把这条信息整理成适合存档的中文 Markdown（包含待办清单、倒计时、笔记、购物清单）\"\n" +
-    "}\n" +
-    "\n" +
-    "今天是：" + today;
-
-  var content = [];
-  if (input.text) { content.push({ type: "text", text: input.text }); }
-  if (input.imageBase64) { content.push({ type: "image_url", image_url: { url: input.imageBase64 } }); }
-  if (!content.length) { content.push({ type: "text", text: "（只有图片，请仔细识别图片内容）" }); }
-
-  return [
-    { role: "system", content: system },
-    { role: "user", content: content }
-  ];
-}
-
-/* 调用 Chat Completions，返回模型输出的文本 */
-async function chatCompletion(options) {
-  var p = PROVIDERS[options.provider];
-  if (!p) { throw new Error("未知 AI_PROVIDER：" + options.provider); }
-  var payload = {
-    model: options.model || p.model,
-    messages: options.messages,
-    temperature: 0.3,
-    max_tokens: 4096,
-    response_format: { type: "json_object" }
-  };
+/* 真正发送一次对话请求 */
+async function sendChat(meta, options, payload) {
   var res = await httpsJsonPost(
-    p.base + p.chatPath,
+    meta.base + meta.chatPath,
     { "Authorization": "Bearer " + options.apiKey },
     payload,
     options.timeoutMs
@@ -116,12 +174,118 @@ async function chatCompletion(options) {
   var choice = res.choices && res.choices[0];
   var content = choice && choice.message && choice.message.content;
   if (!content) {
-    throw new Error("AI 返回为空（" + (res.error ? JSON.stringify(res.error) : "未知错误") + "）");
+    throw new Error("AI 返回为空：" + (res.error ? JSON.stringify(res.error) : "未知错误"));
   }
   return content;
 }
 
-/* 尽量从模型输出中解析出 JSON（支持纯 JSON / 代码块 / 前后有杂文） */
+/* 调用 Chat Completions；部分视觉模型不支持 response_format 时自动去掉重试 */
+async function chatCompletion(options) {
+  var p = PROVIDERS[options.provider];
+  if (!p) { throw new Error("未知 AI_PROVIDER：" + options.provider); }
+  var payload = {
+    model: options.model || p.model,
+    messages: options.messages,
+    temperature: 0.3,
+    max_tokens: 4096
+  };
+  if (options.jsonMode !== false) { payload.response_format = { type: "json_object" }; }
+  try {
+    return await sendChat(p, options, payload);
+  } catch (e) {
+    if (options.jsonMode !== false && /response_format|json_object/i.test(String(e.message))) {
+      delete payload.response_format;
+      return await sendChat(p, options, payload);
+    }
+    throw e;
+  }
+}
+
+/* 构建“秘书”角色的消息：系统提示 + 对话历史 + 当前输入（可带图片） */
+function buildSecretaryMessages(input) {
+  var today = input.today || "";
+  var system =
+    "你是我的资深私人助理（秘书）。请把用户随手记录的文字和图片理解清楚，像贴心秘书一样给出安排，而不是机械分类。\n" +
+    "\n" +
+    "工作要求：\n" +
+    "1. 从信息中提炼“可执行事项”放入 todos，判断优先级（高/中/低），并给出建议完成日期 dueDate（格式 YYYY-MM-DD；仅当信息中出现日期、截止日或相对时间词时才推算填写，否则填空字符串），每条都要有 reason（一句话说明为什么这样安排）。\n" +
+    "2. 有明确日期的事件（如“10月3日参加婚礼”）要同时放入 countdowns（name 用事件名，date 用 YYYY-MM-DD）和 todos。\n" +
+    "3. 纯想法、灵感、知识、备忘放入 notes，tags 给 1~3 个简短标签；买东西的需求放入 shopping。\n" +
+    "4. plan 给出“今天应该优先做的事”，按优先级和截止日期排序，每项一句话。\n" +
+    "5. 图片中的文字必须全部读取并纳入分析；不要编造图片里没有的信息；如果图片和文字都有，以两者结合为准。\n" +
+    "6. 如果用户给出了修改指令（如“房租改成下周一”），请基于之前的安排整体更新，保留仍然有效的事项，输出完整的 JSON，不要只输出变化部分。\n" +
+    "\n" +
+    "输出要求：\n" +
+    "- 只输出一个合法 JSON 对象，不要输出任何其他文字。\n" +
+    "- JSON 结构固定为：\n" +
+    "{\n" +
+    "  \"summary\": \"一句话总结这条信息\",\n" +
+    "  \"plan\": [\"今天优先：...\"],\n" +
+    "  \"todos\": [{\"text\": \"...\", \"priority\": \"高|中|低\", \"dueDate\": \"YYYY-MM-DD 或空字符串\", \"reason\": \"...\"}],\n" +
+    "  \"countdowns\": [{\"name\": \"...\", \"date\": \"YYYY-MM-DD\"}],\n" +
+    "  \"notes\": [{\"text\": \"...\", \"tags\": [\"标签1\", \"标签2\"]}],\n" +
+    "  \"shopping\": [{\"text\": \"...\"}],\n" +
+    "  \"markdown\": \"把这条信息整理成适合存档的中文 Markdown（包含待办清单、倒计时、笔记、购物清单）\"\n" +
+    "}\n" +
+    "\n" +
+    "今天是：" + today;
+
+  var userParts = [];
+  if (input.imageText) { userParts.push("[图片识别结果]\n" + input.imageText); }
+  if (input.text) { userParts.push(input.text); }
+  if (!userParts.length) { userParts.push("（请结合对话历史整理安排）"); }
+
+  var messages = [{ role: "system", content: system }];
+
+  /* 多轮修订：携带最近对话（纯文本），图片只在首轮 */
+  var history = Array.isArray(input.history) ? input.history.slice(-8) : [];
+  history.forEach(function (h) {
+    if (!h || typeof h !== "object") { return; }
+    var role = h.role === "user" ? "user" : "assistant";
+    var c = h.content;
+    if (typeof c === "string" && c.trim()) { messages.push({ role: role, content: c.slice(0, 4000) }); }
+  });
+
+  var userText = userParts.join("\n\n");
+  if (input.singleImage) {
+    /* 单次调用：秘书模型本身能看图，图片直接随本轮请求传入 */
+    messages.push({
+      role: "user",
+      content: [
+        { type: "text", text: userText },
+        { type: "image_url", image_url: { url: input.singleImage } }
+      ]
+    });
+  } else {
+    messages.push({ role: "user", content: userText });
+  }
+  return messages;
+}
+
+/* 识图专用：让视觉模型完整提取图片文字 */
+async function readImageText(provider, model, imageBase64, apiKey, timeoutMs) {
+  var messages = [{
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: "你是一位严谨的 OCR 助手。请完整提取图片中的全部文字（便签、截图、票据、手写、印刷均可），不要遗漏日期、数字、金额；提取完后用一句话概括图片内容。只输出：图片文字内容 + 一句概括。"
+      },
+      { type: "image_url", image_url: { url: imageBase64 } }
+    ]
+  }];
+  var content = await chatCompletion({
+    provider: provider,
+    apiKey: apiKey,
+    model: model,
+    messages: messages,
+    timeoutMs: timeoutMs || 55000,
+    jsonMode: false
+  });
+  return String(content || "").trim();
+}
+
+/* 尽量从模型输出中解析 JSON（支持纯 JSON / 代码块 / 前后杂文） */
 function parseJsonContent(content) {
   if (!content) { return null; }
   var s = String(content).trim();
@@ -140,7 +304,12 @@ function parseJsonContent(content) {
 
 module.exports = {
   PROVIDERS: PROVIDERS,
+  hasVision: hasVision,
+  listAllowedModels: listAllowedModels,
+  resolveSecretary: resolveSecretary,
+  visionChain: visionChain,
   buildSecretaryMessages: buildSecretaryMessages,
+  readImageText: readImageText,
   chatCompletion: chatCompletion,
   parseJsonContent: parseJsonContent,
   httpsJsonPost: httpsJsonPost
