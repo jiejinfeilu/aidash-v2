@@ -440,6 +440,8 @@ async function readImageTextMulti(env, chain, imageBase64, readFn) {
   });
   var lastErr = null;
   for (var g = 0; g < groups.length; g++) {
+    /* 优先级可能从 1 开始（没有自定义模型时只有智谱），跳过空洞 */
+    if (!groups[g]) { continue; }
     var attempts = 0;
     while (attempts < 2) {
       attempts++;
