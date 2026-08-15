@@ -38,6 +38,16 @@ function cleanHistory(history) {
   return out;
 }
 
+/* 清洗 AI 文本：去掉模型幻觉输出的网址（如 raw.githubusercontent 前缀），
+   并清理开头多余的标点/空格 */
+function cleanAiText(v) {
+  var s = String(v == null ? "" : v);
+  s = s.replace(/https?:\/\/[^\s，。；,;]+/gi, "")
+       .replace(/www\.[^\s，。；,;]+/gi, "")
+       .replace(/^\s*[，。；,;:\s]+/, "");
+  return s.trim();
+}
+
 /* 核心逻辑（独立出来便于本地测试） */
 async function runProcess(input) {
   var env = input.env || process.env;
@@ -200,6 +210,18 @@ async function runProcess(input) {
     if (!parsed || typeof parsed !== "object") {
       return { status: 502, json: { error: "AI 返回无法解析的 JSON" } };
     }
+    var summaryClean = cleanAiText(parsed.summary);
+    var planClean = (parsed.plan || []).map(function (p) {
+      if (typeof p === "string") { return cleanAiText(p); }
+      if (p && typeof p === "object") {
+        var o = {};
+        if (p.time != null) { o.time = cleanAiText(p.time); }
+        if (p.action != null) { o.action = cleanAiText(p.action); }
+        if (p.text != null) { o.text = cleanAiText(p.text); }
+        return o;
+      }
+      return p;
+    });
     return {
       status: 200,
       json: {
@@ -208,8 +230,8 @@ async function runProcess(input) {
         model: secretary.model,
         visionProvider: String(input.visionProvider || env.VISION_PROVIDER || "auto"),
         visionUsed: visionUsed,
-        summary: parsed.summary || "",
-        plan: parsed.plan || [],
+        summary: summaryClean,
+        plan: planClean,
         todos: parsed.todos || [],
         countdowns: parsed.countdowns || [],
         notes: parsed.notes || [],
