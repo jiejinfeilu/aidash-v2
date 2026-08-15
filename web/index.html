@@ -2583,6 +2583,12 @@
       var lines = ($("setApiList").value || "").split(/\r?\n/)
         .map(function (s) { return s.trim().replace(/\/+$/, ""); })
         .filter(Boolean);
+      var seen = {};
+      lines = lines.filter(function (l) {
+        if (seen[l]) { return false; }
+        seen[l] = true;
+        return true;
+      });
       var raw = $("setRaw").value.trim().replace(/\/+$/, "");
       var pin = $("setPin").value.trim();
       if (pin && (pin.length < 4 || pin.length > 6)) { setStatus("connStatus", "口令需为 4~6 位", true); return; }
