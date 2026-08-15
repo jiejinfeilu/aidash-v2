@@ -429,9 +429,12 @@ async function readImageText(provider, model, imageBase64, apiKey, timeoutMs, op
    - 按 prio 分组：prio 小的一组先并行试，全部失败才轮到下一组
      （自定义视觉模型 prio=0 优先，智谱 prio=1 兜底）
    - 最后一组若报“访问量过大/限流”，等 2 秒再重试一次 */
-async function readImageTextMulti(env, chain, imageBase64, readFn) {
+async function readImageTextMulti(env, chain, imageBase64, readFn, budgetMs) {
   env = env || process.env;
   readFn = readFn || readImageText;
+  var startAt = Date.now();
+  var budget = budgetMs || 30000;
+  function remaining() { return budget - (Date.now() - startAt); }
   var groups = [];
   chain.forEach(function (vp) {
     var p = typeof vp.prio === "number" ? vp.prio : 0;
@@ -445,16 +448,22 @@ async function readImageTextMulti(env, chain, imageBase64, readFn) {
     var attempts = 0;
     while (attempts < 2) {
       attempts++;
-      var jobs = groups[g].map(function (vp) {
-      var meta = PROVIDERS[vp.provider];
-      var key = vp.apiKey || (meta ? env[meta.envKey] : "");
-      if (!key) {
-        return Promise.resolve({ ok: false, err: new Error("未配置 " + (meta ? meta.envKey : "自定义模型 API Key")) });
+      /* 单次识图最长 20 秒，但不能吃掉整个预算 */
+      var perAttempt = Math.max(5000, Math.min(20000, remaining()));
+      if (perAttempt < 5000) {
+        lastErr = new Error("识图总时间预算不足（请稍后重试）");
+        break;
       }
-      return readFn(vp.provider, vp.model, imageBase64, key, 15000, {
-        baseUrl: vp.baseUrl,
-        chatPath: vp.chatPath
-      })
+      var jobs = groups[g].map(function (vp) {
+        var meta = PROVIDERS[vp.provider];
+        var key = vp.apiKey || (meta ? env[meta.envKey] : "");
+        if (!key) {
+          return Promise.resolve({ ok: false, err: new Error("未配置 " + (meta ? meta.envKey : "自定义模型 API Key")) });
+        }
+        return readFn(vp.provider, vp.model, imageBase64, key, perAttempt, {
+          baseUrl: vp.baseUrl,
+          chatPath: vp.chatPath
+        })
           .then(function (t) {
             return { ok: true, text: t, provider: vp.provider, model: vp.model };
           })
@@ -474,6 +483,7 @@ async function readImageTextMulti(env, chain, imageBase64, readFn) {
       var isLastGroup = g === groups.length - 1;
       /* 非最后一组：失败直接切换下一组（保持优先级）；最后一组限流才重试 */
       if (!rateLimited || !isLastGroup) { break; }
+      if (remaining() < 6000) { break; }
       await sleep(2000);
     }
   }
