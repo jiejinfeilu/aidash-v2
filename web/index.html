@@ -318,6 +318,14 @@
         <summary>Markdown 预览</summary>
         <pre class="md" id="resultMarkdown"></pre>
       </details>
+      <div class="res-block" id="personaUpdateWrap" hidden>
+        <h3>人设更新建议</h3>
+        <pre class="md" id="personaUpdateText"></pre>
+        <div class="btn-row" style="margin:8px 0 0">
+          <button type="button" class="btn btn-primary" id="btnPersonaAdopt">采纳并记录</button>
+          <button type="button" class="btn" id="btnPersonaIgnore">忽略</button>
+        </div>
+      </div>
       <div class="btn-row">
         <button type="button" class="btn" id="btnAdoptAll">一键采纳</button>
         <button type="button" class="btn btn-primary" id="btnSave">保存到云端</button>
@@ -413,6 +421,18 @@
         <option value="openai">OpenAI 视觉模型</option>
         <option value="none">关闭识图</option>
       </select>
+      <label class="field" for="setUserName">AI 对我的称呼（可空）</label>
+      <input type="text" id="setUserName" maxlength="20" placeholder="例如：主人 / 老板 / 你的名字">
+      <label class="field" for="setUserNameVariants">称呼变体（可空，逗号分隔）</label>
+      <input type="text" id="setUserNameVariants" maxlength="100" placeholder="例如：主人，老板，小张">
+      <label class="field" for="setAiTone">语气风格</label>
+      <select id="setAiTone">
+        <option value="默认">默认（自然友好）</option>
+        <option value="活泼">活泼</option>
+        <option value="严肃">严肃</option>
+      </select>
+      <label class="field" for="setAiGreeting">固定开场白（可空，{称呼} 自动替换）</label>
+      <input type="text" id="setAiGreeting" maxlength="60" placeholder="例如：好的，{称呼}！">
       <div style="margin-top:12px"><button type="button" class="btn btn-primary" id="btnSaveAi">保存 AI 设置</button></div>
       <div id="aiStatus" class="status"></div>
       <p class="hint">DeepSeek 官方 API 暂不支持看图（实测），识图请用“智谱”或“自动”；免费模型高峰会自动换备用模型并重试。Key 只存在 Vercel，手机端只保存选择。</p>
@@ -437,6 +457,38 @@
         <div style="margin-top:8px"><button type="button" class="btn" id="btnAddCustomModel">添加自定义模型</button></div>
         <p class="hint">接口需为 OpenAI 兼容（https）；Key 只保存在手机本机，请求时经 HTTPS 发给你的后端，不写入 GitHub；删除模型即删除 Key。</p>
       </div>
+    </div>
+
+    <div class="panel">
+      <h2>AI 人设（人格档案 MD）</h2>
+      <label class="field" for="setPersonaSelect">当前人设</label>
+      <select id="setPersonaSelect"></select>
+      <div class="count-edit" style="margin-top:8px">
+        <input type="text" id="setPersonaName" maxlength="30" placeholder="人设名称，如：知心秘书小航">
+      </div>
+      <div class="btn-row" style="margin:8px 0">
+        <button type="button" class="btn" id="btnAddPersona">新建人设</button>
+        <button type="button" class="btn" id="btnDelPersona">删除当前</button>
+      </div>
+      <div class="btn-row" style="margin:0 0 8px">
+        <button type="button" class="btn" id="btnImportPersona">导入 MD 文件</button>
+        <button type="button" class="btn" id="btnCompressPersona">整理压缩</button>
+        <button type="button" class="btn" id="btnClearPersona">清空</button>
+        <button type="button" class="btn btn-primary" id="btnSavePersona">保存到云端</button>
+      </div>
+      <input type="file" id="personaFile" accept=".md,.txt,text/markdown,text/plain" hidden>
+      <textarea id="personaMdInput" rows="10" maxlength="12000" placeholder="在这里粘贴或导入 AI 的人格档案：性格、脾气、基本信息、说话风格、思考方式、行为准则…（最多 12000 字）"></textarea>
+      <div id="compressWrap" class="res-block" hidden>
+        <h3>压缩预览</h3>
+        <pre class="md" id="compressText"></pre>
+        <div class="btn-row" style="margin:8px 0 0">
+          <button type="button" class="btn btn-primary" id="btnCompressAdopt">采用压缩版</button>
+          <button type="button" class="btn" id="btnCompressCancel">取消</button>
+        </div>
+      </div>
+      <p class="hint" id="personaHint"></p>
+      <div id="personaStatus" class="status"></div>
+      <p class="hint">多个人设各自养成、互不影响，切换“当前人设”即生效；档案建议控制在 4000 字内、核心放最前；超长时可点“整理压缩”。AI 在对话中发现的偏好会给出更新建议，采纳后写进当前人设。</p>
     </div>
 
     <div class="panel">
@@ -695,7 +747,9 @@
       layout: { order: lay.slice(), heights: Object.assign({}, heights) },
       settings: Object.assign({
         city: "温州", lat: "27.99", lon: "120.70", autoAdopt: false,
-        autoFullscreen: true, aiProvider: "deepseek", aiModel: "deepseek-v4-flash", visionProvider: "auto"
+        autoFullscreen: true, aiProvider: "deepseek", aiModel: "deepseek-v4-flash", visionProvider: "auto",
+        userName: "", userNameVariants: "", aiTone: "默认", aiGreeting: "", personaMd: "",
+        personas: [], activePersonaId: ""
       }, CFG.DEFAULT_SETTINGS || {})
     };
   }
@@ -714,6 +768,18 @@
     d.layout.order = (Array.isArray(d.layout.order) && d.layout.order.length) ? d.layout.order : base.layout.order;
     d.layout.heights = Object.assign({}, base.layout.heights, d.layout.heights || {});
     d.settings = Object.assign({}, base.settings, d.settings || {});
+    /* 多套人设迁移：老版本只有 personaMd 时，自动转成“默认人设” */
+    d.settings.personas = Array.isArray(d.settings.personas) ? d.settings.personas : [];
+    if (!d.settings.personas.length && d.settings.personaMd) {
+      d.settings.personas = [{
+        id: "p_default", name: "默认人设", md: d.settings.personaMd,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      }];
+      d.settings.activePersonaId = "p_default";
+    }
+    if (!d.settings.activePersonaId && d.settings.personas.length) {
+      d.settings.activePersonaId = d.settings.personas[0].id;
+    }
     return d;
   }
 
@@ -910,12 +976,62 @@
     persistData();
     renderModelOptions();
   }
+  /* ---------- AI 人设（多套人格档案） ---------- */
+  function getPersonas() { return Array.isArray(data.settings.personas) ? data.settings.personas : []; }
+  function getActivePersona() {
+    var ps = getPersonas();
+    var id = data.settings.activePersonaId;
+    for (var i = 0; i < ps.length; i++) { if (ps[i].id === id) { return ps[i]; } }
+    return ps[0] || null;
+  }
+  function persistPersonas() {
+    data.settings.personas = getPersonas();
+    persistData();
+  }
+  function renderPersonaPanel() {
+    var sel = $("setPersonaSelect");
+    if (!sel) { return; }
+    var ps = getPersonas();
+    var active = getActivePersona();
+    sel.innerHTML = ps.map(function (p) {
+      return '<option value="' + escAttr(p.id) + '"' + (active && p.id === active.id ? " selected" : "") + ">" +
+        esc(p.name || "未命名") + "</option>";
+    }).join("") || '<option value="">（无）</option>';
+    $("setPersonaName").value = active ? (active.name || "") : "";
+    $("personaMdInput").value = active ? (active.md || "") : "";
+    var hint = $("personaHint");
+    if (hint) {
+      if (!active) {
+        hint.textContent = "还没有人设，点“新建人设”开始；也可以导入 MD 文件作为初始档案。";
+      } else if (active.md && active.md.length > 6000) {
+        hint.textContent = "当前档案较长（" + active.md.length + " 字），建议点“整理压缩”后采用精简版，AI 会更好地遵守。";
+      } else {
+        hint.textContent = "共 " + ps.length + " 个人设，当前：「" + (active.name || "未命名") + "」，切换即生效、各自独立成长。";
+      }
+    }
+  }
+  function saveActivePersonaToCloud() {
+    var active = getActivePersona();
+    if (active) {
+      active.name = ($("setPersonaName").value || "").trim() || "未命名";
+      active.md = ($("personaMdInput").value || "").trim().slice(0, 12000);
+      active.updatedAt = nowISO();
+    }
+    persistPersonas();
+    renderPersonaPanel();
+    setStatus("personaStatus", "已保存本机，正在同步云端…");
+    saveToCloud("personaStatus").catch(function () {});
+  }
   function saveAiChoice() {
     var sel = $("setAiModel");
     var parts = String(sel ? sel.value : "deepseek:deepseek-v4-flash").split(":");
     var provider = parts[0] || "deepseek";
     var model = parts.slice(1).join(":");
     var vision = ($("setVisionProvider") || {}).value || "auto";
+    var userName = String(($("setUserName") || {}).value || "").trim().slice(0, 20);
+    var userNameVariants = String(($("setUserNameVariants") || {}).value || "").trim().slice(0, 100);
+    var aiTone = (($("setAiTone") || {}).value || "默认");
+    var aiGreeting = String(($("setAiGreeting") || {}).value || "").trim().slice(0, 60);
     try {
       localStorage.setItem(LS_AI_MODEL, JSON.stringify({ provider: provider, model: model }));
       localStorage.setItem(LS_AI_VISION, vision);
@@ -923,8 +1039,12 @@
     data.settings.aiProvider = provider;
     data.settings.aiModel = model;
     data.settings.visionProvider = vision;
+    data.settings.userName = userName;
+    data.settings.userNameVariants = userNameVariants;
+    data.settings.aiTone = aiTone;
+    data.settings.aiGreeting = aiGreeting;
     persistData();
-    return { provider: provider, model: model, visionProvider: vision };
+    return { provider: provider, model: model, visionProvider: vision, userName: userName, userNameVariants: userNameVariants, aiTone: aiTone, aiGreeting: aiGreeting };
   }
 
   /* ---------- 后端地址探活与模型列表 ---------- */
@@ -1288,6 +1408,7 @@
     $("btnChatSend").disabled = true;
     setStatus("procStatus", "AI 秘书正在分析…（模型：" + aiChoice.model + "）");
     $("chatBox").hidden = false;
+    $("personaUpdateWrap").hidden = true;
     if (isRevision) {
       appendChat("user", text);
       $("chatInput").value = "";
@@ -1305,7 +1426,13 @@
       model: aiChoice.model,
       visionProvider: vision,
       history: isRevision ? chatHistory.slice(-8) : [],
-      customProviders: getCustomProviders()
+      customProviders: getCustomProviders(),
+      userName: data.settings.userName || "",
+      userNameVariants: data.settings.userNameVariants || "",
+      aiTone: data.settings.aiTone || "默认",
+      aiGreeting: data.settings.aiGreeting || "",
+      personaMd: (getActivePersona() || {}).md || "",
+      personaName: (getActivePersona() || {}).name || ""
     }, 45000, function (i, base, total) {
       setStatus("procStatus", "AI 秘书正在分析…（尝试第 " + (i + 1) + "/" + total + " 个后端：" + base + "）");
     }).then(function (res) {
@@ -1318,6 +1445,12 @@
       };
       $("resultPanel").hidden = false;
       renderResult();
+      if (res.personaUpdate && String(res.personaUpdate).trim()) {
+        $("personaUpdateText").textContent = String(res.personaUpdate).trim();
+        $("personaUpdateWrap").hidden = false;
+      } else {
+        $("personaUpdateWrap").hidden = true;
+      }
       var summary = aiResult.summary ? aiResult.summary : "";
       var plan = (aiResult.plan || []).map(function (p) { return "• " + planText(p); }).join("\n");
       var bubble = summary + (plan ? "\n今日安排：\n" + plan : "");
@@ -1473,6 +1606,10 @@
     $("setPushHour").value = data.settings.pushHour != null ? data.settings.pushHour : 8;
     $("autoAdopt").checked = !!data.settings.autoAdopt;
     $("autoFullscreen").checked = data.settings.autoFullscreen !== false;
+    $("setUserName").value = data.settings.userName || "";
+    $("setUserNameVariants").value = data.settings.userNameVariants || "";
+    $("setAiTone").value = data.settings.aiTone || "默认";
+    $("setAiGreeting").value = data.settings.aiGreeting || "";
     renderModelOptions();
     var hint = $("activeApiHint");
     if (hint) {
@@ -2319,6 +2456,7 @@
     renderBuiltinQuotes();
     fillSettings();
     renderCustomModels();
+    renderPersonaPanel();
   }
 
   /* ---------- 云端读取 ---------- */
@@ -2390,6 +2528,150 @@
       renderResult();
     });
     $("btnSave").addEventListener("click", function () { adoptAndSave().catch(function () {}); });
+    /* ---- AI 人设（多套人格档案，各自独立养成） ---- */
+    $("btnAddPersona").addEventListener("click", function () {
+      var ps = getPersonas();
+      ps.push({
+        id: "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        name: "新的人设",
+        md: "",
+        createdAt: nowISO(),
+        updatedAt: nowISO()
+      });
+      data.settings.activePersonaId = ps[ps.length - 1].id;
+      persistPersonas();
+      renderPersonaPanel();
+      setStatus("personaStatus", "已新建人设，填入内容后点“保存到云端”生效");
+    });
+    $("btnDelPersona").addEventListener("click", function () {
+      var active = getActivePersona();
+      if (!active) { setStatus("personaStatus", "没有可删除的人设", true); return; }
+      if (!window.confirm("确定删除人设「" + (active.name || "未命名") + "」？")) { return; }
+      var ps = getPersonas().filter(function (p) { return p.id !== active.id; });
+      data.settings.personas = ps;
+      data.settings.activePersonaId = ps.length ? ps[0].id : "";
+      persistPersonas();
+      renderPersonaPanel();
+      setStatus("personaStatus", "已删除");
+    });
+    $("setPersonaSelect").addEventListener("change", function () {
+      data.settings.activePersonaId = $("setPersonaSelect").value || "";
+      persistData();
+      renderPersonaPanel();
+      setStatus("personaStatus", "已切换（未保存的修改不会自动保存，记得点“保存到云端”）");
+    });
+    $("setPersonaName").addEventListener("change", function () {
+      var active = getActivePersona();
+      if (active) {
+        active.name = ($("setPersonaName").value || "").trim() || "未命名";
+        active.updatedAt = nowISO();
+        persistPersonas();
+        renderPersonaPanel();
+        setStatus("personaStatus", "名称已改，记得点“保存到云端”");
+      }
+    });
+    $("btnImportPersona").addEventListener("click", function () { $("personaFile").click(); });
+    $("personaFile").addEventListener("change", function () {
+      var f = $("personaFile").files && $("personaFile").files[0];
+      if (!f) { return; }
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var txt = String(e.target.result || "").slice(0, 12000);
+        var active = getActivePersona();
+        if (!active) {
+          data.settings.personas = [{
+            id: "p_" + Date.now().toString(36),
+            name: "默认人设",
+            md: txt,
+            createdAt: nowISO(),
+            updatedAt: nowISO()
+          }];
+          data.settings.activePersonaId = data.settings.personas[0].id;
+          persistPersonas();
+        } else {
+          active.md = txt;
+          active.updatedAt = nowISO();
+          persistPersonas();
+        }
+        renderPersonaPanel();
+        setStatus("personaStatus", "已导入（" + txt.length + " 字），点“保存到云端”生效" + (txt.length >= 12000 ? "；已截断到 12000 字" : ""));
+      };
+      reader.onerror = function () { setStatus("personaStatus", "文件读取失败", true); };
+      reader.readAsText(f, "utf-8");
+      $("personaFile").value = "";
+    });
+    $("btnClearPersona").addEventListener("click", function () {
+      if (!window.confirm("确定清空当前人设档案？")) { return; }
+      var active = getActivePersona();
+      if (active) { active.md = ""; active.updatedAt = nowISO(); persistPersonas(); }
+      renderPersonaPanel();
+      setStatus("personaStatus", "已清空，点“保存到云端”生效");
+    });
+    $("btnSavePersona").addEventListener("click", saveActivePersonaToCloud);
+    $("btnCompressPersona").addEventListener("click", function () {
+      var active = getActivePersona();
+      if (!active || !(active.md || "").trim()) { setStatus("personaStatus", "当前人设档案为空，无法压缩", true); return; }
+      var pin = getPin(), api = getApi();
+      if (!pin || !api) { setStatus("personaStatus", "请先在“连接”里填写口令和后端地址", true); return; }
+      var aiChoice = getAiChoice();
+      setStatus("personaStatus", "正在整理压缩（AI 生成精简版）…");
+      postJSONMulti("/api/process", {
+        pin: pin,
+        personaTask: "compress",
+        personaMd: active.md,
+        provider: aiChoice.provider,
+        model: aiChoice.model,
+        customProviders: getCustomProviders()
+      }, 45000).then(function (res) {
+        if (!res || !res.personaMd) { setStatus("personaStatus", "压缩失败：未返回内容", true); return; }
+        $("compressText").textContent = res.personaMd;
+        $("compressWrap").hidden = false;
+        window.pendingCompressMd = res.personaMd;
+        setStatus("personaStatus", res.summary ? "压缩完成：" + res.summary : "压缩完成，请预览后决定是否采用");
+      }).catch(function (e) {
+        setStatus("personaStatus", "压缩失败：" + e.message, true);
+      });
+    });
+    $("btnCompressAdopt").addEventListener("click", function () {
+      if (!window.pendingCompressMd) { return; }
+      var active = getActivePersona();
+      if (active) {
+        active.md = window.pendingCompressMd.slice(0, 12000);
+        active.updatedAt = nowISO();
+        persistPersonas();
+      }
+      renderPersonaPanel();
+      $("compressWrap").hidden = true;
+      window.pendingCompressMd = "";
+      setStatus("personaStatus", "已采用压缩版，正在同步云端…");
+      saveToCloud("personaStatus").catch(function () {});
+    });
+    $("btnCompressCancel").addEventListener("click", function () {
+      $("compressWrap").hidden = true;
+      window.pendingCompressMd = "";
+      setStatus("personaStatus", "已取消压缩");
+    });
+    $("btnPersonaAdopt").addEventListener("click", function () {
+      var upd = ($("personaUpdateText").textContent || "").trim();
+      if (!upd) { return; }
+      var active = getActivePersona();
+      if (!active) { setStatus("saveStatus", "请先创建人设再采纳更新", true); return; }
+      var base = (active.md || "").trim();
+      var d = new Date();
+      var head = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      var section = "\n\n## 更新记录 · " + head + "\n" + upd;
+      active.md = (base ? base : "# AI 人设档案\n") + section;
+      active.updatedAt = nowISO();
+      persistPersonas();
+      renderPersonaPanel();
+      $("personaUpdateWrap").hidden = true;
+      setStatus("saveStatus", "已采纳并写入当前人设档案，正在同步云端…");
+      saveToCloud("saveStatus").catch(function () {});
+    });
+    $("btnPersonaIgnore").addEventListener("click", function () {
+      $("personaUpdateWrap").hidden = true;
+      setStatus("saveStatus", "已忽略本次人设更新建议");
+    });
   }
 
   function bindResultEvents() {
