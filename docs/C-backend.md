@@ -42,6 +42,7 @@
 | ZHIPU_API_KEY | 智谱开放平台 Key（识图用，免费；https://open.bigmodel.cn） |
 | ZHIPU_MODEL | `glm-4.6v-flash` |
 | ZHIPU_VISION_MODELS | `glm-4.6v-flash,glm-4v-flash`（识图兜底链，可只留一个） |
+| ZHIPU_MAX_TOKENS | `1024`（免费模型单次输出上限；付费模型可调大） |
 | VISION_PROVIDER | `auto`（推荐）/ `zhipu` / `openai` / `none` |
 | ALLOWED_AI_MODELS | `deepseek:deepseek-v4-flash,deepseek:deepseek-v4-pro,zhipu:glm-4.6v-flash,openai:gpt-4o-mini` |
 | OPENAI_API_KEY | 留空（用 OpenAI 时再填） |
@@ -150,6 +151,7 @@ curl -X POST https://你的项目.vercel.app/api/save \
 - **502 AI 调用失败**：`DEEPSEEK_API_KEY` 没填、余额不足，或模型不在白名单（`ALLOWED_AI_MODELS`）。
 - **图片上传报 image_url 不支持**：这是 DeepSeek 官方 API 的限制（实测），请把识图引擎设为 `auto` 或 `zhipu`，并确认 `ZHIPU_API_KEY` 已配置。
 - **识图提示“访问量过大”**：智谱免费模型高峰限流，代码会自动并行换 `glm-4v-flash` 并重试；仍失败就稍等 1~2 分钟再试。
+- **识图报 max_tokens 参数非法**：智谱免费视觉模型输出上限是 1024 tokens，代码已自动适配；若识别长文被截断，可换付费的 `glm-4.6v-flashx` 并把 `ZHIPU_MAX_TOKENS` 调大。
 - **502 GitHub 写入失败**：Token 权限不足（需要 Contents 读写）、Token 过期，或 `GITHUB_REPO` 写错（格式 `用户名/仓库名`）。
 - **图片太大**：前端已自动压缩；若仍报错，说明图片质量/尺寸超限，压缩参数在 `web/index.html` 的 `fileToDataURL` 里。
 - **想用 OpenAI**：把 `AI_PROVIDER` 改成 `openai`，填上 `OPENAI_API_KEY`；注意国内网络需要代理，费用高于 DeepSeek。

@@ -169,8 +169,11 @@ python send_to_kindle.py              # 生成并推送
 |---|---|
 | 手机提示口令错误 401 | 手机口令与 Vercel `APP_PIN` 不一致 |
 | AI 调用失败 502 | 检查 `DEEPSEEK_API_KEY`、余额、模型名 |
-| 图片上传 AI 报错 | 识图引擎设 `auto` 或 `zhipu`，并确认 Vercel 已配 `ZHIPU_API_KEY` |
+| 图片上传 AI 报错 | DeepSeek 官方 API 不支持看图（实测），识图引擎设 `auto` 或 `zhipu`，确认 Vercel 已配 `ZHIPU_API_KEY` |
+| 识图提示“访问量过大” | 智谱免费模型高峰限流，已自动换备用模型重试；仍失败稍等 1~2 分钟再试 |
+| 识图报 max_tokens 参数非法 | 智谱免费模型输出上限 1024，已自动适配；无需操作 |
 | 手机端怎么换模型 | 设置 → AI 模型 → 选 DeepSeek V4 Flash / Pro 等 → 保存（Key 共用） |
+| 想加自己的模型/API | 设置 → AI 模型 → 自定义模型（本地保存）→ 填名称/模型名/接口地址/Key → 添加 |
 | 保存失败 502 | 检查 `GITHUB_TOKEN` 权限（Contents 读写）和 `GITHUB_REPO` 格式 |
 | 收不到 Kindle 推送 | 国际账户 `@kindle.com`；发件邮箱加白名单；Kindle 连 Wi-Fi |
 | Kindle 休眠显示广告 | 带特惠版，需在 amazon.com 移除广告 |
