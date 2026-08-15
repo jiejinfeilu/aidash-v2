@@ -222,6 +222,38 @@ async function runProcess(input) {
       }
       return p;
     });
+    /* 只要用户消息/人设档案里没有网址，就把 AI 输出里所有网址都剔掉
+       （模型偶发幻觉复读 raw.githubusercontent 等地址） */
+    var inputHasUrl = /https?:\/\//i.test(text) || /https?:\/\//i.test(personaMd);
+    function cleanMaybe(v) {
+      return inputHasUrl ? String(v == null ? "" : v) : cleanAiText(v);
+    }
+    var todosClean = (parsed.todos || []).map(function (t) {
+      if (!t || typeof t !== "object") { return t; }
+      var o = Object.assign({}, t);
+      if (o.text != null) { o.text = cleanMaybe(o.text); }
+      if (o.reason != null) { o.reason = cleanMaybe(o.reason); }
+      return o;
+    });
+    var countdownsClean = (parsed.countdowns || []).map(function (c) {
+      if (!c || typeof c !== "object") { return c; }
+      var o = Object.assign({}, c);
+      if (o.name != null) { o.name = cleanMaybe(o.name); }
+      return o;
+    });
+    var notesClean = (parsed.notes || []).map(function (n) {
+      if (!n || typeof n !== "object") { return n; }
+      var o = Object.assign({}, n);
+      if (o.text != null) { o.text = cleanMaybe(o.text); }
+      return o;
+    });
+    var shoppingClean = (parsed.shopping || []).map(function (s) {
+      if (!s || typeof s !== "object") { return s; }
+      var o = Object.assign({}, s);
+      if (o.text != null) { o.text = cleanMaybe(o.text); }
+      return o;
+    });
+    var markdownClean = inputHasUrl ? String(parsed.markdown || "") : cleanAiText(parsed.markdown);
     return {
       status: 200,
       json: {
@@ -232,11 +264,11 @@ async function runProcess(input) {
         visionUsed: visionUsed,
         summary: summaryClean,
         plan: planClean,
-        todos: parsed.todos || [],
-        countdowns: parsed.countdowns || [],
-        notes: parsed.notes || [],
-        shopping: parsed.shopping || [],
-        markdown: parsed.markdown || "",
+        todos: todosClean,
+        countdowns: countdownsClean,
+        notes: notesClean,
+        shopping: shoppingClean,
+        markdown: markdownClean,
         personaUpdate: parsed.personaUpdate ? String(parsed.personaUpdate).trim().slice(0, 4000) : ""
       }
     };
