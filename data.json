@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-15T13:43:00.563Z",
+  "updatedAt": "2026-08-15T14:36:19.908Z",
   "todos": [
     {
       "text": "周六前把房租转给房东",
@@ -56,6 +56,13 @@
     "aiProvider": "deepseek",
     "aiModel": "deepseek-v4-flash",
     "visionProvider": "auto",
-    "customModels": []
+    "customModels": [],
+    "userName": "https://raw.githubus",
+    "userNameVariants": "主人，小主",
+    "aiTone": "默认",
+    "aiGreeting": "",
+    "personaMd": "",
+    "personas": [],
+    "activePersonaId": ""
   }
 }
