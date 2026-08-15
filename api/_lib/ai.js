@@ -379,7 +379,7 @@ function buildSecretaryMessages(input) {
       system += "，称呼变体还有：" + names.slice(1).map(function (n) { return "「" + n + "」"; }).join("、") +
         "（不同回复之间轮换使用，不要每次都一样）";
     }
-    system += "。请在总结和今日安排里自然使用这个称呼，不要每句都叫。";
+    system += "。每次回复的总结开头请自然称呼一次（例如“好的，主人”），之后的句子一律用“你”，不要每句重复称呼。";
   }
 
   /* 语气风格 */
@@ -389,7 +389,7 @@ function buildSecretaryMessages(input) {
   } else if (tone === "严肃") {
     system += "\n语气风格：简洁、正式、专业，不用感叹号、表情和网络用语。";
   } else {
-    system += "\n语气风格：自然友好。";
+    system += "\n语气风格：自然友好，像日常聊天，口语化但不啰嗦；避免“已为您安排如下”这类公文式僵硬表达。";
   }
 
   /* 固定开场白（支持 {称呼} 占位符） */
@@ -421,6 +421,11 @@ function buildSecretaryMessages(input) {
     "请在输出 JSON 的可选字段 personaUpdate 中给出简短 Markdown 增量（如 \"- 新增：…\" 或 \"- 修改：…\"）；" +
     "更新要精简（一般不超过 200 字）；如果档案里已有类似内容，优先输出 \"- 修改：…\" 而不是重复添加；" +
     "仅在确有值得记录的变化时输出，没有变化就不要输出该字段。";
+
+  /* 网址纪律：不编造、不附带链接（模型偶发幻觉输出 raw.githubusercontent 之类地址） */
+  system +=
+    "\n\n网址纪律：除用户原文明确给出的网址外，不要在总结、今日安排、待办、笔记、购物清单和 Markdown 里编造或附带任何网址/链接；" +
+    "尤其不要输出 raw.githubusercontent.com、jsdelivr、vercel.app 之类的地址。";
 
   var userParts = [];
   if (input.imageText) { userParts.push("[图片识别结果]\n" + input.imageText); }
