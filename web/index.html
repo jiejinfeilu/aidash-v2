@@ -1262,6 +1262,9 @@
   function chatMsgForUser(text) {
     return text ? text : (pendingImage ? "📷 图片（识别内容见下方安排）" : "");
   }
+  function cleanChatText(s) {
+    return String(s || "").replace(/https?:\/\/[^\s，。；,;]+/gi, "").replace(/^\s*[，。；,;:\s]+/, "").trim();
+  }
 
   function fileToDataURL(file) {
     return new Promise(function (resolve, reject) {
@@ -1340,10 +1343,11 @@
 
   function renderResult() {
     if (!aiResult) { return; }
-    $("resultSummary").textContent = aiResult.summary ? "总结：" + aiResult.summary : "";
+    $("resultSummary").textContent = aiResult.summary ? "总结：" + cleanChatText(aiResult.summary) : "";
 
     var planHtml = aiResult.plan.map(function (p) {
-      return '<div class="plan-item">' + esc(planText(p)) + "</div>";
+      var t = cleanChatText(planText(p));
+      return t ? '<div class="plan-item">' + esc(t) + "</div>" : "";
     }).join("");
     $("resultPlan").innerHTML = planHtml || '<div class="empty">没有安排建议</div>';
     $("resultPlanWrap").style.display = aiResult.plan.length ? "" : "none";
@@ -1451,8 +1455,11 @@
       } else {
         $("personaUpdateWrap").hidden = true;
       }
-      var summary = aiResult.summary ? aiResult.summary : "";
-      var plan = (aiResult.plan || []).map(function (p) { return "• " + planText(p); }).join("\n");
+      var summary = cleanChatText(aiResult.summary);
+      var plan = (aiResult.plan || []).map(function (p) {
+        var t = cleanChatText(planText(p));
+        return t ? "• " + t : "";
+      }).filter(Boolean).join("\n");
       var bubble = summary + (plan ? "\n今日安排：\n" + plan : "");
       appendChat("assistant", bubble || "已更新安排，请查看下方面板。");
       chatHistory.push({ role: "assistant", content: bubble || "已更新安排" });
