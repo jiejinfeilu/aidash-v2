@@ -83,6 +83,10 @@ async function runProcess(input) {
   }
   var visionUsed = vc.mode === "none" ? "none" : "";
 
+  /* 总预算：识图 + 分析共享 52 秒（Vercel 免费版函数上限 60 秒） */
+  var TOTAL_BUDGET = 52000;
+  var startAt = Date.now();
+
   /* 5. 组装消息（有图时按引擎选择单次调用或先读图再分析） */
   var messages;
   if (imageBase64) {
@@ -99,7 +103,7 @@ async function runProcess(input) {
       /* 两段式：先并行读图（多模型兜底 + 限流重试），再交给秘书分析 */
       var img;
       try {
-        img = await ai.readImageTextMulti(env, vc.chain, imageBase64);
+        img = await ai.readImageTextMulti(env, vc.chain, imageBase64, undefined, TOTAL_BUDGET);
       } catch (e) {
         return {
           status: 502,
@@ -122,6 +126,10 @@ async function runProcess(input) {
     if (secretary.provider === "zhipu") {
       maxTokens = parseInt(env.ZHIPU_MAX_TOKENS || "1024", 10) || 1024;
     }
+    /* 带图时受总预算约束；纯文字请求保留 45 秒 */
+    var secTimeout = imageBase64
+      ? Math.max(8000, Math.min(30000, TOTAL_BUDGET - (Date.now() - startAt)))
+      : 45000;
     var content = await ai.chatCompletion({
       provider: secretary.provider,
       apiKey: apiKey,
@@ -129,7 +137,7 @@ async function runProcess(input) {
       messages: messages,
       baseUrl: secretary.baseUrl,
       chatPath: secretary.chatPath,
-      timeoutMs: imageBase64 ? 25000 : 45000,
+      timeoutMs: secTimeout,
       maxTokens: maxTokens
     });
     var parsed = ai.parseJsonContent(content);
@@ -154,7 +162,11 @@ async function runProcess(input) {
       }
     };
   } catch (e) {
-    return { status: 502, json: { error: "AI 调用失败：" + e.message } };
+    var msg = "AI 调用失败：" + e.message;
+    if (/超时|timeout/i.test(String(e.message))) {
+      msg += "。可能是免费模型繁忙或分析模型较慢：请稍后重试，或把分析模型切回 DeepSeek V4 Flash";
+    }
+    return { status: 502, json: { error: msg } };
   }
 }
 
