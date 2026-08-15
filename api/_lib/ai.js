@@ -322,7 +322,7 @@ async function chatCompletion(options) {
     model: options.model || p.model,
     messages: options.messages,
     temperature: 0.3,
-    max_tokens: 4096
+    max_tokens: options.maxTokens || 4096
   };
   if (options.jsonMode !== false) { payload.response_format = { type: "json_object" }; }
   try {
@@ -417,6 +417,8 @@ async function readImageText(provider, model, imageBase64, apiKey, timeoutMs, op
     messages: messages,
     timeoutMs: timeoutMs || 55000,
     jsonMode: false,
+    /* 智谱免费视觉模型输出上限 1024 tokens，OCR 结果足够用 */
+    maxTokens: 1024,
     baseUrl: opts.baseUrl,
     chatPath: opts.chatPath
   });
