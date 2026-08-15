@@ -285,7 +285,7 @@
       <h2>秘书对话</h2>
       <div id="chatList" class="chat-list"></div>
       <div class="chat-input-row">
-        <input type="text" id="chatInput" placeholder="对秘书说：房租改成下周一 / 再加一条买水果…">
+        <input type="text" id="chatInput" placeholder="对秘书说：房租改成下周一 / 再加一条买水果…" autocomplete="off" autocorrect="off" spellcheck="false">
         <button type="button" class="btn" id="btnChatSend">发送</button>
       </div>
       <p class="hint">AI 先给你安排建议，你可以继续说话修改；确认后在下方面板勾选并“保存到云端”。</p>
@@ -1410,6 +1410,8 @@
     processing = true;
     $("btnProcess").disabled = true;
     $("btnChatSend").disabled = true;
+    /* 防止浏览器自动填充把网址塞进对话输入框 */
+    $("chatInput").value = "";
     setStatus("procStatus", "AI 秘书正在分析…（模型：" + aiChoice.model + "）");
     $("chatBox").hidden = false;
     $("personaUpdateWrap").hidden = true;
