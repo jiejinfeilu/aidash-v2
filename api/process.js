@@ -32,7 +32,7 @@ function cleanHistory(history) {
   history.slice(-8).forEach(function (h) {
     if (!h || typeof h !== "object") { return; }
     var role = h.role === "user" ? "user" : "assistant";
-    var c = String(h.content || "").trim();
+    var c = cleanAiText(h.content);
     if (c) { out.push({ role: role, content: c.slice(0, 4000) }); }
   });
   return out;
@@ -68,8 +68,8 @@ async function runProcess(input) {
     if (s && userNameVariants.length < 10) { userNameVariants.push(s); }
   });
   var aiTone = ["活泼", "严肃"].indexOf(String(input.aiTone || "").trim()) >= 0 ? String(input.aiTone).trim() : "默认";
-  var aiGreeting = String(input.aiGreeting || "").trim().slice(0, 60);
-  var personaMd = String(input.personaMd || "").trim().slice(0, 12000);
+  var aiGreeting = cleanAiText(input.aiGreeting).slice(0, 60);
+  var personaMd = cleanAiText(input.personaMd).slice(0, 12000);
   var personaName = String(input.personaName || "").trim().slice(0, 30);
   var personaTask = String(input.personaTask || "").trim().toLowerCase();
   /* 人设压缩任务不需要文字/图片 */
