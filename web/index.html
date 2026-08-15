@@ -1250,6 +1250,7 @@
 
   /* 秘书对话：气泡 + 多轮修订历史 */
   var chatHistory = [];
+  var chatTyped = false; /* 用户是否真的在对话输入框里打过字（区分浏览器自动填充） */
   function appendChat(role, text) {
     var box = $("chatList");
     if (!box) { return; }
@@ -1412,6 +1413,7 @@
     $("btnChatSend").disabled = true;
     /* 防止浏览器自动填充把网址塞进对话输入框 */
     $("chatInput").value = "";
+    chatTyped = false;
     setStatus("procStatus", "AI 秘书正在分析…（模型：" + aiChoice.model + "）");
     $("chatBox").hidden = false;
     $("personaUpdateWrap").hidden = true;
@@ -1431,7 +1433,9 @@
       provider: aiChoice.provider,
       model: aiChoice.model,
       visionProvider: vision,
-      history: isRevision ? chatHistory.slice(-8) : [],
+      history: isRevision ? chatHistory.slice(-8).map(function (h) {
+        return { role: h.role, content: cleanChatText(h.content) };
+      }) : [],
       customProviders: getCustomProviders(),
       userName: data.settings.userName || "",
       userNameVariants: data.settings.userNameVariants || "",
@@ -2525,6 +2529,13 @@
     });
     $("btnProcess").addEventListener("click", function () { doProcess(false); });
     $("btnChatSend").addEventListener("click", function () { doProcess(true); });
+    $("chatInput").addEventListener("input", function () { chatTyped = true; });
+    $("chatInput").addEventListener("focus", function () {
+      /* 浏览器自动填充/表单恢复塞进来的网址，不是用户输入的，直接清掉 */
+      if (!chatTyped && /^https?:\/\//i.test($("chatInput").value)) {
+        $("chatInput").value = "";
+      }
+    });
     $("chatInput").addEventListener("keydown", function (e) {
       if (e.key === "Enter") { doProcess(true); }
     });
@@ -3038,6 +3049,10 @@
     setInterval(renderHeaderDate, 60000);
     window.addEventListener("offline", function () { setNetBanner("err", "当前离线：只能查看本机缓存"); });
     window.addEventListener("online", function () { setNetBanner("ok", "网络已恢复，正在重新连接…"); probeApis(); });
+    window.addEventListener("pageshow", function () {
+      /* 手机浏览器后退/前进恢复页面时，表单可能自动恢复旧值，统一清掉 */
+      $("chatInput").value = "";
+    });
     fetchModels();
     probeApis();
     fetchRemoteData(false);
