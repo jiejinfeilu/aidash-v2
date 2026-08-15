@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-13T14:59:14.750Z",
+  "updatedAt": "2026-08-15T11:57:46.165Z",
   "todos": [
     {
       "text": "周六前把房租转给房东",
@@ -51,6 +51,10 @@
     "lat": "27.99",
     "lon": "120.70",
     "autoAdopt": false,
-    "layoutPreset": "landscape"
+    "layoutPreset": "landscape",
+    "autoFullscreen": true,
+    "aiProvider": "deepseek",
+    "aiModel": "deepseek-v4-pro",
+    "visionProvider": "deepseek"
   }
 }
