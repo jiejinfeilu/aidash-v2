@@ -6,7 +6,7 @@
 
 | 接口 | 作用 | 关键入参 | 返回 |
 |---|---|---|---|
-| `POST /api/process` | AI 秘书分析文字+图片（支持多轮修订） | `pin`、`text`、`imageBase64`、`provider`、`model`、`visionProvider`、`history` | `summary / plan / todos / countdowns / notes / shopping / markdown / provider / model / visionUsed` |
+| `POST /api/process` | AI 秘书分析文字+图片（支持多轮修订与“人设压缩”任务） | `pin`、`text`、`imageBase64`、`provider`、`model`、`visionProvider`、`history`、`userName`、`userNameVariants`、`aiTone`、`aiGreeting`、`personaMd`、`personaName`、`personaTask`、`customProviders` | `summary / plan / todos / countdowns / notes / shopping / markdown / provider / model / visionUsed / personaUpdate`；`personaTask=compress` 时返回 `{ ok, personaMd, summary }` |
 | `POST /api/save` | 合并数据写回 GitHub | `pin`、`data`、`markdown?` | `{ ok, updatedAt }` |
 | `GET /api/ping` | 探活 + 返回可用模型列表（手机端下拉框数据源） | 无 | `{ ok, ai, models, visionProviders }` |
 | `GET /api/data` | 代理读取 data.json（前端第一数据源，绕过被墙的 raw） | 无 | data.json 内容 |
@@ -80,6 +80,18 @@
    - 识图引擎：自动（推荐）/ 智谱 / DeepSeek（预留）/ OpenAI / 自定义视觉模型 / 关闭。
 2. 点“保存 AI 设置”，选择会写入 `data.json.settings` 并同步云端。
 3. 每次“AI 秘书处理”都会把选择带给后端，后端校验白名单后执行。
+4. 称呼与语气（纯文字/带图都生效）：
+   - “AI 对我的称呼”：主称呼，如“主人”；
+   - “称呼变体”：逗号分隔多个，如“主人，老板，小张”，不同回复间轮换；
+   - “语气风格”：默认 / 活泼 / 严肃；
+   - “固定开场白”：如“好的，{称呼}！”——`{称呼}` 会自动替换成你的称呼，每次回复总结开头先用它。
+5. “AI 人设（人格档案 MD）”：导入/编辑一份 Markdown 人格档案（性格、脾气、说话风格、思考方式、行为准则，最多 12000 字），
+   每次回复严格遵循；对话中 AI 发现值得记录的新偏好时，会返回 `personaUpdate` 建议，
+   手机端点“采纳并记录”即追加写入档案并同步云端（带日期“更新记录”小节），让 AI 持续“成长”。
+   - **多套人设**：可新建/切换/重命名/删除多套人格档案，各自独立成长，切换当前人设即生效；
+   - **档案过长怎么办**：提示词会优先执行档案开头的“核心身份/性格/底线/风格”，成长记录只作背景；
+     AI 的更新建议已要求“精简修改（≤200 字）”而不是无限追加；超过 6000 字时手机端会提醒，
+     可点“整理压缩”让 AI 生成 ≤4000 字的精简核心版，预览后采用（`personaTask=compress`）。
 
 ### 3.3 切换到 DeepSeek V4 Pro（两种方式）
 
