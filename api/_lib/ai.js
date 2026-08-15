@@ -365,6 +365,63 @@ function buildSecretaryMessages(input) {
     "\n" +
     "今天是：" + today;
 
+  /* 称呼 + 称呼变体（纯文字/带图请求都生效） */
+  var names = [];
+  if (input.userName) { names.push(String(input.userName).trim()); }
+  (Array.isArray(input.userNameVariants) ? input.userNameVariants : []).forEach(function (n) {
+    n = String(n || "").trim();
+    if (n && names.indexOf(n) < 0 && names.length < 10) { names.push(n); }
+  });
+  var primaryName = names.length ? names[0] : "";
+  if (primaryName) {
+    system += "\n\n用户希望被你称呼为「" + primaryName + "」";
+    if (names.length > 1) {
+      system += "，称呼变体还有：" + names.slice(1).map(function (n) { return "「" + n + "」"; }).join("、") +
+        "（不同回复之间轮换使用，不要每次都一样）";
+    }
+    system += "。请在总结和今日安排里自然使用这个称呼，不要每句都叫。";
+  }
+
+  /* 语气风格 */
+  var tone = input.aiTone || "默认";
+  if (tone === "活泼") {
+    system += "\n语气风格：活泼亲切，像朋友一样，可以适当用感叹号和“~”收尾，不要使用 emoji 符号。";
+  } else if (tone === "严肃") {
+    system += "\n语气风格：简洁、正式、专业，不用感叹号、表情和网络用语。";
+  } else {
+    system += "\n语气风格：自然友好。";
+  }
+
+  /* 固定开场白（支持 {称呼} 占位符） */
+  var greeting = String(input.aiGreeting || "").trim();
+  if (greeting) {
+    greeting = greeting.replace(/\{称呼\}/g, primaryName || "你");
+    system += "\n固定开场白：每次回复的总结（summary）开头请先使用「" + greeting + "」自然开场（可以补标点衔接，不要加其它多余前缀）。";
+  }
+
+  /* AI 人设档案（Markdown）：用户提供并持续更新的“人格发展文件” */
+  var personaMd = String(input.personaMd || "").trim();
+  if (personaMd) {
+    if (input.personaName) {
+      system += "\n\n你现在扮演的人设名称：「" + String(input.personaName).trim().slice(0, 30) + "」。";
+    }
+    system +=
+      "\n\n【AI 人设与行为准则（Markdown 档案，必须严格遵守）】\n" + personaMd +
+      "\n\n这份档案是你的“人格发展档案”：你的性格、脾气、基本信息、说话风格、思考方式、习惯与约束都以它为准；" +
+      "当档案内容与本提示其它要求冲突时，以档案为准（涉及安全与明显事实错误时除外）。" +
+      "你应当在回复中自然体现这份人格，而不是机械复述档案内容。" +
+      "如果档案较长：档案开头的「核心身份 / 性格 / 脾气与底线 / 说话风格 / 思考方式 / 行为准则」优先执行，" +
+      "后面的成长记录作为背景参考即可，不要让历史细节盖过核心人格。";
+  }
+
+  /* 人格成长：把值得记录的新偏好通过 personaUpdate 回报，由用户确认后写回档案 */
+  system +=
+    "\n\n每次回复：如果这次对话里你了解到值得记录的新偏好或变化" +
+    "（例如用户纠正了称呼、语气、作息、工作方式，或你自己形成了更稳定的风格），" +
+    "请在输出 JSON 的可选字段 personaUpdate 中给出简短 Markdown 增量（如 \"- 新增：…\" 或 \"- 修改：…\"）；" +
+    "更新要精简（一般不超过 200 字）；如果档案里已有类似内容，优先输出 \"- 修改：…\" 而不是重复添加；" +
+    "仅在确有值得记录的变化时输出，没有变化就不要输出该字段。";
+
   var userParts = [];
   if (input.imageText) { userParts.push("[图片识别结果]\n" + input.imageText); }
   if (input.text) { userParts.push(input.text); }
@@ -382,6 +439,10 @@ function buildSecretaryMessages(input) {
   });
 
   var userText = userParts.join("\n\n");
+  /* 在用户消息里也提醒一次称呼，提高模型遵守率（纯文字/带图都生效） */
+  if (primaryName) {
+    userText = userText + "\n（本条请用「" + primaryName + "」称呼我）";
+  }
   if (input.singleImage) {
     /* 单次调用：秘书模型本身能看图，图片直接随本轮请求传入 */
     messages.push({
@@ -395,6 +456,17 @@ function buildSecretaryMessages(input) {
     messages.push({ role: "user", content: userText });
   }
   return messages;
+}
+
+/* 人设档案整理器：把长大的档案压缩成核心版（供“整理压缩”功能使用） */
+function buildCompressMessages(personaMd) {
+  return [
+    {
+      role: "system",
+      content: "你是 AI 人设档案整理器。请把用户的人格档案压缩整理成一份不超过 4000 字、结构清晰的 Markdown，保留：核心身份、性格、脾气与底线、说话风格、思考方式、行为准则与约束、成长方向。删除重复和过时细节，把重要约束写得更明确。只输出 JSON：{\"personaMd\":\"压缩后的Markdown\",\"summary\":\"一句话说明这次整理改了什么\"}"
+    },
+    { role: "user", content: personaMd }
+  ];
 }
 
 /* 识图专用：让视觉模型完整提取图片文字 */
@@ -517,6 +589,7 @@ module.exports = {
   resolveSecretary: resolveSecretary,
   visionChain: visionChain,
   buildSecretaryMessages: buildSecretaryMessages,
+  buildCompressMessages: buildCompressMessages,
   readImageText: readImageText,
   readImageTextMulti: readImageTextMulti,
   getVisionModels: getVisionModels,
